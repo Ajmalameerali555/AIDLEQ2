@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AIDLEX.AE</title>
+  <meta name="color-scheme" content="dark">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tsparticles@2.11.1/tsparticles.bundle.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&family=Noto+Naskh+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { --bg:#0f0f0f; --fg:#fafafa; --muted:#a3a3a3; }
+    body { background:var(--bg); color:var(--fg); font-family:Inter, system-ui, Segoe UI, Roboto, sans-serif; }
+    .typewriter h1{ overflow:hidden; white-space:nowrap; letter-spacing:.14em; animation:typing 2.8s steps(30,end) forwards }
+    @keyframes typing{from{width:0} to{width:100%}}
+    .fade-in{opacity:0; animation:fadeIn 1s ease-in-out forwards}
+    @keyframes fadeIn{to{opacity:1}}
+    .card{ background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.12); border-radius:1.1rem }
+    .service-btn{
+      background:rgba(255,255,255,.05); border:1px solid rgba(255,255,255,.15);
+      padding:.85rem 1.1rem; border-radius:.8rem; font-weight:600; font-size:.95rem; transition:.2s;
+    }
+    .service-btn:hover{ background:rgba(255,255,255,.15) }
+    .arabic{ font-family:"Noto Naskh Arabic", serif }
+    .rtl{ direction:rtl; text-align:right }
+    .centered{ text-align:center }
+    .print-page{ max-width:794px; margin:auto; padding:32px }
+    @media print{ body{ background:#fff; color:#000 } .no-print{ display:none!important } .print-page{ padding:0 } }
+
+    /* ChatGPT-like input dock for workspace only */
+    .chat-dock{
+      position: sticky; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(180deg, rgba(15,15,15,0), rgba(15,15,15,1) 35%);
+      padding: 16px 0 24px 0;
+    }
+    .compose{
+      display:flex; align-items:center; gap:.5rem;
+      background:#111318; border:1px solid #2a2f3a; border-radius:999px;
+      padding:10px; max-width:900px; margin:auto;
+    }
+    .compose textarea{
+      flex:1; resize:none; background:transparent; color:white; border:none; outline:none;
+      padding:6px 8px; max-height:120px; min-height:24px; font-size:14px;
+    }
+    .compose .btn{
+      width:38px; height:38px; display:grid; place-items:center;
+      background:#1b1f2a; border:1px solid #2a2f3a; border-radius:999px; cursor:pointer;
+    }
+    .compose .btn:hover{ background:#2a3140 }
+    .bubble{border-radius:16px; padding:12px 14px}
+    .bubble.assistant{ background:#16181d; border:1px solid #2a2f3a }
+    .bubble.user{ background:#19324b; border:1px solid #32597f }
+    .dot{ width:6px;height:6px;background:#9aa3b2;border-radius:999px;display:inline-block;margin:0 2px;opacity:.3;animation:blink 1.2s infinite; }
+    .dot:nth-child(2){animation-delay:.2s} .dot:nth-child(3){animation-delay:.4s}
+    @keyframes blink{0%,100%{opacity:.2} 50%{opacity:1}}
+
+    .stepper { display:flex; gap:.6rem; justify-content:center; align-items:center; }
+    .step{ display:flex; align-items:center; gap:.45rem; font-size:.8rem; color:#9ca3af }
+    .step .num{ width:22px;height:22px;border-radius:999px;display:grid;place-items:center;border:1px solid #374151;background:#111318; }
+    .step.active{ color:#e5e7eb }
+    .step.active .num{ border-color:#60a5fa; background:#1f2937 }
+
+    .badge{font-size:10px; padding:2px 6px; border:1px solid rgba(255,255,255,.18); border-radius:999px; color:#cbd5e1}
+  </style>
+</head>
+<body class="relative min-h-screen">
+  <div id="tsparticles" class="absolute inset-0 -z-10"></div>
+
+  <!-- ===== Views ===== -->
+
+  <!-- Welcome (center) -->
+  <section id="view-welcome" class="px-6 pt-10 max-w-3xl mx-auto">
+    <div class="typewriter centered">
+      <h1 class="text-3xl md:text-5xl font-extrabold tracking-widest">AIDLEX.AE</h1>
+    </div>
+    <p class="mt-3 centered text-base md:text-lg text-zinc-300 fade-in" style="animation-delay:2.9s">
+      AI‑Powered Legal Intelligence — Bilingual (EN/AR) • UAE‑Aligned • Human‑Voice Enabled
+    </p>
+    <div class="mt-3 centered">
+      <span class="badge">Model: AIDLEX.AE</span>
+      <span class="badge ml-2">Fine‑tuned</span>
+      <span class="badge ml-2">Premium UI</span>
+    </div>
+
+    <div class="mt-10 centered">
+      <button id="btn-begin" class="service-btn text-lg px-6 py-3">Begin</button>
+    </div>
+
+    <div class="mt-8 stepper">
+      <div class="step active"><div class="num">1</div><div>Welcome</div></div>
+      <div class="step"><div class="num">2</div><div>Profile</div></div>
+      <div class="step"><div class="num">3</div><div>History</div></div>
+      <div class="step"><div class="num">4</div><div>Services</div></div>
+      <div class="step"><div class="num">5</div><div>Workspace</div></div>
+    </div>
+  </section>
+
+  <!-- Profile -->
+  <section id="view-profile" class="px-6 pt-10 max-w-xl mx-auto hidden">
+    <h2 class="text-xl font-bold centered">Your Details</h2>
+    <p class="text-center text-zinc-400 mt-1 text-sm">We’ll use this to personalize your filings and retrieve your service history.</p>
+    <form id="form-profile" class="card p-4 mt-4 space-y-3">
+      <div>
+        <label class="text-sm text-zinc-400">Full Name</label>
+        <input name="name" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" required>
+      </div>
+      <div>
+        <label class="text-sm text-zinc-400">Mobile (UAE or International)</label>
+        <input name="mobile" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" placeholder="+9715XXXXXXXX" required>
+      </div>
+      <div>
+        <label class="text-sm text-zinc-400">Email (optional)</label>
+        <input name="email" type="email" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" placeholder="you@example.com">
+      </div>
+      <div class="flex items-center justify-center gap-3 pt-2">
+        <button class="service-btn px-6 py-2" type="submit">Continue</button>
+      </div>
+    </form>
+  </section>
+
+  <!-- History -->
+  <section id="view-history" class="px-6 pt-10 max-w-3xl mx-auto hidden">
+    <h2 class="text-xl font-bold centered">Service History</h2>
+    <div id="history-list" class="mt-4 space-y-2"></div>
+    <div class="mt-6 centered">
+      <button id="btn-to-services" class="service-btn px-6 py-2">Continue to Services</button>
+    </div>
+
+    <div class="mt-8 stepper">
+      <div class="step"><div class="num">1</div><div>Welcome</div></div>
+      <div class="step"><div class="num">2</div><div>Profile</div></div>
+      <div class="step active"><div class="num">3</div><div>History</div></div>
+      <div class="step"><div class="num">4</div><div>Services</div></div>
+      <div class="step"><div class="num">5</div><div>Workspace</div></div>
+    </div>
+  </section>
+
+  <!-- Services (centered grid) -->
+  <section id="view-services" class="px-6 pt-10 max-w-3xl mx-auto hidden">
+    <h2 class="text-xl font-bold centered">Choose a Service</h2>
+    <div class="card p-4 mt-4">
+      <div>
+        <h3 class="text-xs uppercase tracking-widest text-zinc-400 mb-2">Court & Disputes</h3>
+        <div class="grid grid-cols-1 gap-2">
+          <button class="service-btn" data-panel="memo">Dubai Court Memo (EN/AR)</button>
+          <button class="service-btn" data-panel="letter">Formal Request / Complaint (EN/AR)</button>
+          <button class="service-btn" data-prompt="Which legal step should I take next?">Next Legal Step</button>
+          <button class="service-btn" data-prompt="Get help with court filing or legal process">Court Filing Help</button>
+        </div>
+      </div>
+      <div class="mt-5">
+        <h3 class="text-xs uppercase tracking-widest text-zinc-400 mb-2">Documentation</h3>
+        <div class="grid grid-cols-1 gap-2">
+          <button class="service-btn" data-panel="translate">Legal Translation → Arabic (UAE format)</button>
+          <button class="service-btn" data-prompt="Request a legal document or memo">Draft Contract / Clause</button>
+          <button class="service-btn" data-panel="uploads">Upload Evidence</button>
+        </div>
+      </div>
+      <div class="mt-5">
+        <h3 class="text-xs uppercase tracking-widest text-zinc-400 mb-2">Advisory</h3>
+        <div class="grid grid-cols-1 gap-2">
+          <button class="service-btn" data-panel="chat">Live Chat (Fine‑tuned)</button>
+          <button class="service-btn" data-panel="kb">Knowledge Base</button>
+          <button class="service-btn" data-prompt="Ask general legal questions">General Q&A</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-8 stepper">
+      <div class="step"><div class="num">1</div><div>Welcome</div></div>
+      <div class="step"><div class="num">2</div><div>Profile</div></div>
+      <div class="step"><div class="num">3</div><div>History</div></div>
+      <div class="step active"><div class="num">4</div><div>Services</div></div>
+      <div class="step"><div class="num">5</div><div>Workspace</div></div>
+    </div>
+  </section>
+
+  <!-- Workspace (panels appear only after choosing) -->
+  <section id="view-workspace" class="px-4 md:px-8 lg:px-12 pt-8 hidden">
+    <div class="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <!-- Right: Panels -->
+      <section class="lg:col-span-12 space-y-6">
+
+        <!-- Chat Panel -->
+        <div id="panel-chat" class="card p-0 hidden">
+          <div class="p-4 flex items-center justify-between">
+            <h2 class="text-lg font-bold">Live Chat</h2>
+            <div class="text-xs text-zinc-400">Thinking <span class="dot"></span><span class="dot"></span><span class="dot"></span></div>
+          </div>
+          <div id="chat-log" class="h-80 overflow-y-auto px-4 pb-4"></div>
+
+          <!-- Chat Dock -->
+          <div class="chat-dock">
+            <div class="compose">
+              <label title="Attach" class="btn" for="chat-files">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M21.44 11.05l-8.49 8.49a6 6 0 11-8.49-8.49l8.49-8.49a4 4 0 115.66 5.66L10.34 16.49a2 2 0 11-2.83-2.83l7.78-7.78" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round"/></svg>
+              </label>
+              <input id="chat-files" type="file" multiple class="hidden">
+              <textarea id="chat-input" rows="1" placeholder="Message AIDLEX.AE…"></textarea>
+              <button id="btn-voice" class="btn" title="Voice to text">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 3a3 3 0 00-3 3v6a3 3 0 106 0V6a3 3 0 00-3-3z" stroke="#cbd5e1" stroke-width="1.6"/><path d="M5 10v2a7 7 0 0014 0v-2" stroke="#cbd5e1" stroke-width="1.6"/></svg>
+              </button>
+              <button id="btn-speak-last" class="btn" title="Read last reply">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M3 18V6l13 6-13 6z" fill="#cbd5e1"/><path d="M19 6v12" stroke="#cbd5e1" stroke-width="1.6"/></svg>
+              </button>
+              <button id="btn-send" class="btn" title="Send">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M22 2L11 13" stroke="#cbd5e1" stroke-width="1.6" stroke-linecap="round"/><path d="M22 2l-7 20-4-9-9-4 20-7z" stroke="#cbd5e1" stroke-width="1.6" stroke-linejoin="round"/></svg>
+              </button>
+            </div>
+            <div id="chat-files-list" class="max-w-3xl mx-auto mt-2 text-xs text-zinc-400 px-3"></div>
+          </div>
+        </div>
+
+        <!-- Memo Wizard -->
+        <div id="panel-memo" class="card p-4 hidden">
+          <h2 class="text-lg font-bold mb-3">Dubai Court Memo — Structured (EN/AR)</h2>
+          <form id="memo-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-sm text-zinc-400">Forum / Emirate</label>
+              <select name="forum" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" required>
+                <option>Dubai Courts – Primary</option>
+                <option>Dubai Courts – Appeal</option>
+                <option>Dubai Courts – Cassation</option>
+                <option>DIFC Courts</option>
+                <option>RDC (Dubai Rent Disputes Center)</option>
+              </select>
+            </div>
+            <div>
+              <label class="text-sm text-zinc-400">Case Type</label>
+              <select name="caseType" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" required>
+                <option>Contractual claim</option>
+                <option>Tenancy/Rent</option>
+                <option>Employment</option>
+                <option>Cheque/Banking</option>
+                <option>Civil/Commercial</option>
+                <option>Traffic</option>
+                <option>Other</option>
+              </select>
+            </div>
+            <div class="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><label class="text-sm text-zinc-400">Claimant (EN)</label>
+                <input name="claimantEN" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" required></div>
+              <div><label class="text-sm text-zinc-400">Defendant (EN)</label>
+                <input name="defendantEN" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" required></div>
+              <div><label class="text-sm text-zinc-400 arabic">المدعي (AR)</label>
+                <input name="claimantAR" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 arabic rtl" required></div>
+              <div><label class="text-sm text-zinc-400 arabic">المدعى عليه (AR)</label>
+                <input name="defendantAR" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 arabic rtl" required></div>
+            </div>
+            <div class="md:col-span-2">
+              <label class="text-sm text-zinc-400">Facts & Background (EN)</label>
+              <textarea name="factsEN" rows="4" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" required></textarea>
+            </div>
+            <div class="md:col-span-2">
+              <label class="text-sm text-zinc-400 arabic">الوقائع والخلفية (AR)</label>
+              <textarea name="factsAR" rows="4" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 arabic rtl" required></textarea>
+            </div>
+            <div>
+              <label class="text-sm text-zinc-400">Relief / Requests (EN)</label>
+              <textarea name="reliefEN" rows="3" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" required></textarea>
+            </div>
+            <div>
+              <label class="text-sm text-zinc-400 arabic">الطلبات (AR)</label>
+              <textarea name="reliefAR" rows="3" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 arabic rtl" required></textarea>
+            </div>
+            <div>
+              <label class="text-sm text-zinc-400">Dates / Deadlines (ISO)</label>
+              <input name="dates" placeholder="2025-10-01; 2025-11-15…" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2">
+            </div>
+            <div>
+              <label class="text-sm text-zinc-400">Evidence List (EN; comma‑sep)</label>
+              <input name="evidenceEN" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" placeholder="Cheque copy, Bank statement, Contract…">
+            </div>
+            <div class="md:col-span-2">
+              <label class="text-sm text-zinc-400 arabic">قائمة المستندات (AR؛ مفصولة بفواصل)</label>
+              <input name="evidenceAR" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 arabic rtl" placeholder="صورة الشيك، كشف حساب بنكي، عقد…">
+            </div>
+            <div class="md:col-span-2">
+              <label class="text-sm text-zinc-400">Attachments</label>
+              <input id="memo-files" type="file" multiple class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2">
+              <div id="memo-upload-status" class="text-xs text-zinc-400 mt-2"></div>
+            </div>
+            <div class="md:col-span-2 flex items-center gap-3">
+              <button class="service-btn" id="btn-memo-generate" type="submit">Pre‑flight → Generate</button>
+              <button id="btn-print-memo" class="service-btn no-print" type="button" disabled>Print / Save PDF</button>
+            </div>
+          </form>
+          <div id="memo-preflight" class="mt-4 hidden card p-3 bg-black/20"></div>
+          <article id="memo-output" class="mt-5 hidden card p-4 bg-white text-black"></article>
+        </div>
+
+        <!-- Translation Panel -->
+        <div id="panel-translate" class="card p-4 hidden">
+          <h2 class="text-lg font-bold mb-3">Legal Translation to Arabic (UAE format)</h2>
+          <form id="tr-form" class="grid grid-cols-1 gap-3">
+            <textarea id="tr-source" rows="6" placeholder="Paste English text…" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2"></textarea>
+            <div class="flex items-center gap-3">
+              <label class="text-sm text-zinc-400"><input id="tr-cert" type="checkbox" class="mr-2">Add certification footer</label>
+              <label class="text-sm text-zinc-400"><input id="tr-kb" type="checkbox" class="mr-2" checked>UAE banking/cheque phrasing</label>
+            </div>
+            <div class="flex items-center gap-3">
+              <button class="service-btn" id="tr-run" type="button">Translate → العربية</button>
+              <button class="service-btn no-print" id="tr-print" type="button" disabled>Print / Save PDF</button>
+            </div>
+          </form>
+          <article id="tr-output" class="mt-5 hidden card p-4 bg-white text-black arabic rtl"></article>
+        </div>
+
+        <!-- Formal Request / Complaint -->
+        <div id="panel-letter" class="card p-4 hidden">
+          <h2 class="text-lg font-bold mb-3">Formal Request / Complaint (EN/AR)</h2>
+          <form id="letter-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <label class="text-sm text-zinc-400">Department / Authority</label>
+              <input name="dept" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" placeholder="MOHRE, Police eCrime, VAT, RDC…">
+            </div>
+            <div>
+              <label class="text-sm text-zinc-400">Purpose</label>
+              <input name="purpose" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2" placeholder="Complaint / Reconsideration / Inquiry">
+            </div>
+            <div class="md:col-span-2">
+              <label class="text-sm text-zinc-400">Key Facts (EN)</label>
+              <textarea name="factsEN" rows="4" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2"></textarea>
+            </div>
+            <div class="md:col-span-2">
+              <label class="text-sm text-zinc-400 arabic">الوقائع (AR)</label>
+              <textarea name="factsAR" rows="4" class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2 arabic rtl"></textarea>
+            </div>
+            <div class="md:col-span-2 flex items-center gap-3">
+              <button class="service-btn" type="submit">Generate Letter</button>
+              <button id="letter-print" class="service-btn no-print" type="button" disabled>Print / Save PDF</button>
+            </div>
+          </form>
+          <article id="letter-output" class="mt-5 hidden card p-4 bg-white text-black"></article>
+        </div>
+
+        <!-- Evidence Uploads -->
+        <div id="panel-uploads" class="card p-4 hidden">
+          <h2 class="text-lg font-bold mb-3">Upload Evidence (Stored server‑side)</h2>
+          <input id="files-upload" type="file" multiple class="w-full bg-zinc-900 border border-zinc-700 rounded px-3 py-2">
+          <button id="btn-upload" class="service-btn mt-3">Upload</button>
+          <div id="upload-result" class="mt-3 text-sm"></div>
+        </div>
+
+        <!-- Knowledge Base -->
+        <div id="panel-kb" class="card p-4 hidden">
+          <h2 class="text-lg font-bold mb-3">Knowledge Base (Finite, Bilingual)</h2>
+          <div class="flex gap-2 mb-3">
+            <input id="kb-q" class="flex-1 px-3 py-2 rounded bg-zinc-900 border border-zinc-700" placeholder="Search e.g., 'RDC non-payment Dubai'">
+            <button class="service-btn" id="kb-search">Search</button>
+          </div>
+          <div class="text-xs text-zinc-400 mb-2">Scopes: RDC, MOHRE, Traffic, DIFC/ADGM Employment, VAT reconsideration, eCrime.</div>
+          <div id="kb-results" class="space-y-3"></div>
+        </div>
+
+      </section>
+    </div>
+
+    <div class="mt-8 stepper">
+      <div class="step"><div class="num">1</div><div>Welcome</div></div>
+      <div class="step"><div class="num">2</div><div>Profile</div></div>
+      <div class="step"><div class="num">3</div><div>History</div></div>
+      <div class="step"><div class="num">4</div><div>Services</div></div>
+      <div class="step active"><div class="num">5</div><div>Workspace</div></div>
+    </div>
+  </section>
+
+  <script>
+    // Particles
+    tsParticles.load("tsparticles", {
+      background:{ color:"#0f0f0f" },
+      particles:{ number:{ value:60 }, size:{ value:2 }, color:{ value:"#ffffff" }, opacity:{ value:0.2 },
+        move:{ enable:true, speed:0.6 }, links:{ enable:true, distance:140, color:"#ffffff", opacity:0.1 } },
+      interactivity:{ events:{ onhover:{ enable:true, mode:"repulse" } } }, fullScreen:{ enable:false }
+    });
+
+    // ===== View Flow =====
+    const V = {
+      welcome: document.getElementById('view-welcome'),
+      profile: document.getElementById('view-profile'),
+      history: document.getElementById('view-history'),
+      services: document.getElementById('view-services'),
+      workspace: document.getElementById('view-workspace')
+    };
+    function goto(view){
+      Object.values(V).forEach(el => el.classList.add('hidden'));
+      V[view].classList.remove('hidden');
+      window.scrollTo({ top:0, behavior:"smooth" });
+    }
+
+    // Begin -> Profile
+    document.getElementById('btn-begin').addEventListener('click', ()=>{
+      goto('profile');
+    });
+
+    // Profile submit
+    let aidlexProfile = null;
+    document.getElementById('form-profile').addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const name = (fd.get('name')||'').trim();
+      const mobile = (fd.get('mobile')||'').trim();
+      const email = (fd.get('email')||'').trim();
+      // basic checks
+      if(!/^[+]?[\d\s\-()]{7,20}$/.test(mobile)) return alert('Enter a valid mobile number.');
+      aidlexProfile = { name, mobile, email };
+      localStorage.setItem('aidlex_profile', JSON.stringify(aidlexProfile));
+      try {
+        await fetch('/api/profile',{ method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(aidlexProfile) });
+      } catch{}
+      loadHistory().then(()=> goto('history'));
+    });
+
+    async function loadHistory(){
+      const list = document.getElementById('history-list'); list.innerHTML = 'Loading…';
+      const p = JSON.parse(localStorage.getItem('aidlex_profile')||'{}');
+      if(!p.mobile){ list.innerHTML = '<div class="text-zinc-400">No profile set.</div>'; return; }
+      try{
+        const r = await fetch('/api/history?mobile='+encodeURIComponent(p.mobile));
+        const { items=[] } = await r.json();
+        if(!items.length){ list.innerHTML = '<div class="text-zinc-400">No history yet. You can start a new service.</div>'; return; }
+        list.innerHTML = items.map(it=>`
+          <div class="card p-3">
+            <div class="text-sm"><b>${it.type}</b> • ${new Date(it.ts).toLocaleString()}</div>
+            <div class="text-xs text-zinc-400">${it.summary||''}</div>
+          </div>`).join('');
+      }catch(e){
+        list.innerHTML = '<div class="text-red-400">Could not load history.</div>';
+      }
+    }
+
+    document.getElementById('btn-to-services').addEventListener('click', ()=> goto('services'));
+
+    // ===== Services -> Workspace Panels =====
+    const panels = { chat:"panel-chat", memo:"panel-memo", translate:"panel-translate", kb:"panel-kb", letter:"panel-letter", uploads:"panel-uploads" };
+    function showPanel(key){
+      // Move to workspace if not already there
+      if(V.workspace.classList.contains('hidden')) goto('workspace');
+      Object.values(panels).forEach(id=>document.getElementById(id)?.classList.add("hidden"));
+      document.getElementById(panels[key])?.classList.remove("hidden");
+      window.scrollTo({ top:0, behavior:"smooth" });
+    }
+    document.querySelectorAll("#view-services .service-btn").forEach(btn=>{
+      const panel = btn.dataset.panel; const prompt = btn.dataset.prompt;
+      btn.addEventListener("click", ()=>{
+        if(panel){ showPanel(panel); }
+        if(prompt){ showPanel('chat'); document.getElementById('chat-input').value = prompt; }
+      });
+    });
+
+    // ===== Voice: TTS primary (Web Speech) with OpenAI fallback =====
+    let voices = [];
+    function loadVoices(){
+      voices = speechSynthesis.getVoices();
+      if(!voices.length){ setTimeout(loadVoices, 300); }
+    }
+    if('speechSynthesis' in window){ speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); }
+    function pickVoice(lang){
+      const femNames = ['female','zira','laila','leila','mariam','salma','dania','sara','hoda','zeina','amira','fatima','noura','layla','naira','nada','ar-','en-'];
+      const list = voices.filter(v=> v.lang && v.lang.toLowerCase().startsWith(lang.toLowerCase()));
+      const female = list.find(v=> femNames.some(n=> (v.name||'').toLowerCase().includes(n))) || list[0];
+      return female || voices[0];
+    }
+    async function speakText(text){
+      const isAR = /[\u0600-\u06FF]/.test(text);
+      if('speechSynthesis' in window && voices.length){
+        const chunks = text.match(/.{1,700}(\s|$)/g) || [text];
+        for(const ch of chunks){
+          const u = new SpeechSynthesisUtterance(ch);
+          const voice = pickVoice(isAR ? 'ar' : 'en');
+          if(voice) u.voice = voice;
+          u.lang = isAR ? 'ar-AE' : 'en-GB';
+          u.rate = 1.02; u.pitch = 1.0; u.volume = 1.0;
+          speechSynthesis.speak(u);
+        }
+        return;
+      }
+      const res = await fetch('/api/tts',{ method:'POST', body: text });
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const audio = new Audio(url); audio.play();
+    }
+
+    // ===== Voice to Text =====
+    let recognizing = false, rec;
+    async function startVoice(){
+      if('webkitSpeechRecognition' in window){
+        rec = new webkitSpeechRecognition();
+        rec.lang = 'en-US'; rec.interimResults = true; rec.continuous = true;
+        rec.onresult = (e)=>{
+          let final=''; for(let i=e.resultIndex;i<e.results.length;i++){ final += e.results[i][0].transcript; }
+          document.getElementById('chat-input').value = (document.getElementById('chat-input').value + ' ' + final).trim();
+        };
+        rec.onend = ()=>{ recognizing=false; document.getElementById('btn-voice').style.background=''; };
+        rec.start(); recognizing=true; document.getElementById('btn-voice').style.background='#374151';
+        return;
+      }
+      if(!navigator.mediaDevices?.getUserMedia) return alert('Microphone not available.');
+      const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+      const mr = new MediaRecorder(stream);
+      const chunks=[];
+      mr.ondataavailable = (e)=>{ if(e.data.size>0) chunks.push(e.data); };
+      mr.onstop = async ()=>{
+        const blob = new Blob(chunks,{ type:'audio/webm' });
+        const fd = new FormData(); fd.append('audio', blob, 'input.webm');
+        const r = await fetch('/api/stt',{ method:'POST', body:fd });
+        const { text } = await r.json();
+        document.getElementById('chat-input').value = (document.getElementById('chat-input').value + ' ' + (text||'')).trim();
+      };
+      mr.start(); recognizing=true; document.getElementById('btn-voice').style.background='#374151';
+      setTimeout(()=>{ mr.stop(); recognizing=false; document.getElementById('btn-voice').style.background=''; }, 5000);
+    }
+    document.addEventListener('click', (e)=>{
+      if(e.target && e.target.id==='btn-voice'){
+        if(recognizing && rec){ rec.stop(); recognizing=false; document.getElementById('btn-voice').style.background=''; return; }
+        startVoice();
+      }
+    });
+
+    // ===== Chat =====
+    const log = document.getElementById("chat-log");
+    const chatInput = document.getElementById('chat-input');
+    const chatFiles = document.getElementById('chat-files');
+    const chatFilesList = document.getElementById('chat-files-list');
+    const filesSelected = [];
+    function bubble(role, text){
+      const wrap = document.createElement('div');
+      wrap.className = "mb-3";
+      wrap.innerHTML = `<div class="bubble ${role} whitespace-pre-wrap">${text}</div>`;
+      if(role==='assistant'){
+        const tools = document.createElement('div');
+        tools.className = 'mt-1 text-xs text-zinc-400 flex items-center gap-2';
+        const btn = document.createElement('button');
+        btn.textContent = '🔊 Read aloud';
+        btn.onclick = ()=> speakText(text);
+        tools.appendChild(btn);
+        wrap.appendChild(tools);
+      }
+      log.appendChild(wrap);
+      log.scrollTop = log.scrollHeight;
+    }
+    document.getElementById('btn-speak-last').addEventListener('click', ()=>{
+      const bubbles = [...log.querySelectorAll('.bubble.assistant')];
+      if(!bubbles.length) return;
+      speakText(bubbles[bubbles.length-1].textContent.trim());
+    });
+    chatFiles.addEventListener('change', async (e)=>{
+      const fd = new FormData();
+      for(const f of e.target.files){ fd.append('files', f); }
+      const headers = {};
+      try {
+        const p = JSON.parse(localStorage.getItem('aidlex_profile')||'{}');
+        if(p.mobile) headers['x-mobile'] = p.mobile;
+      } catch {}
+      const r = await fetch('/api/upload',{ method:'POST', body:fd, headers });
+      const { files } = await r.json();
+      files.forEach(f=> filesSelected.push(f.url));
+      chatFilesList.innerHTML = filesSelected.map(u=>`<span class="badge mr-1">attached</span> <a class="underline" target="_blank" href="${u}">${u}</a>`).join("<br>");
+    });
+    function sendMessage(){
+      const q = chatInput.value.trim(); if(!q) return;
+      bubble('user', q);
+      chatInput.value = "";
+      const thinking = document.createElement('div'); thinking.className = 'text-xs text-zinc-400 px-4'; thinking.innerHTML = 'AIDLEX.AE is thinking <span class="dot"></span><span class="dot"></span><span class="dot"></span>'; log.appendChild(thinking);
+      const profile = JSON.parse(localStorage.getItem('aidlex_profile')||'{}');
+      fetch('/api/chat',{ method:'POST', headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ query:q, files: filesSelected, profile }) })
+        .then(r=>r.json()).then(d=>{
+          thinking.remove();
+          bubble('assistant', d.text || '(no response)');
+        }).catch(err=>{
+          thinking.remove(); bubble('assistant', 'Error: '+err);
+        });
+    }
+    document.getElementById('btn-send').addEventListener('click', sendMessage);
+    chatInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); } });
+
+    // ===== Memo, Translation, Letter, Uploads, KB: include profile in calls =====
+    function profileOrAlert(){
+      const p = JSON.parse(localStorage.getItem('aidlex_profile')||'{}');
+      if(!p.mobile){ alert('Please complete your profile first.'); goto('profile'); return null; }
+      return p;
+    }
+
+    // Memo
+    const memoForm = document.getElementById("memo-form");
+    const memoPre  = document.getElementById("memo-preflight");
+    const memoOut  = document.getElementById("memo-output");
+    const memoPrintBtn = document.getElementById("btn-print-memo");
+    function hasArabic(s){ return /[\u0600-\u06FF]/.test(s||""); }
+    document.getElementById("memo-files").addEventListener("change", async (e)=>{
+      const files = e.target.files; if(!files.length) return;
+      const s = document.getElementById("memo-upload-status"); s.textContent = "Uploading…";
+      const fd = new FormData(); for(const f of files) fd.append("files", f);
+      const headers = {}; const p = profileOrAlert(); if(!p) return;
+      headers['x-mobile'] = p.mobile;
+      const r = await fetch("/api/upload",{ method:"POST", body:fd, headers });
+      const { files:uploaded, error } = await r.json();
+      if(error){ s.textContent = error; return; }
+      s.innerHTML = uploaded.map(f=>`✔ ${f.name}`).join("<br>");
+      s.dataset.paths = JSON.stringify(uploaded.map(f=>f.url));
+    });
+    memoForm.addEventListener("submit", async (e)=>{
+      e.preventDefault();
+      const p = profileOrAlert(); if(!p) return;
+      const fd = new FormData(memoForm);
+      const payload = Object.fromEntries(fd.entries());
+      if(!hasArabic(payload.claimantAR)||!hasArabic(payload.defendantAR)||!hasArabic(payload.factsAR)||!hasArabic(payload.reliefAR)){
+        alert("Arabic fields must be in Arabic. Please correct."); return;
+      }
+      payload.attachments = JSON.parse(document.getElementById("memo-upload-status").dataset.paths || "[]");
+      payload.profile = p;
+      const r = await fetch("/api/memo",{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(payload) });
+      const data = await r.json();
+      if(data.stage==="preflight"){
+        memoPre.classList.remove("hidden");
+        memoPre.dataset.ready = "1";
+        memoPre.innerHTML = `
+          <div class="text-sm text-zinc-300 mb-1">Pre‑flight Checks</div>
+          <div class="grid grid-cols-1 gap-2">
+            ${data.questions.map((q,i)=>`
+              <div class="card p-2">
+                <div class="text-sm">${q.en}</div>
+                <div class="arabic rtl text-sm text-zinc-200 mt-1">${q.ar}</div>
+                <input class="mt-2 w-full px-2 py-1 bg-zinc-900 border border-zinc-700 rounded" data-q="${i}" placeholder="Answer">
+              </div>`).join("")}
+          </div>
+          <div class="mt-3 text-xs text-zinc-400">
+            Evidence checklist:<br>${data.evidence.map(e=>`• ${e}`).join("<br>")}
+          </div>
+          <button id="memo-confirm" class="service-btn mt-3">Confirm & Generate</button>
+        `;
+        document.getElementById("memo-confirm").onclick = async ()=>{
+          const answers = [...memoPre.querySelectorAll("input[data-q]")].map(i=>i.value);
+          const r2 = await fetch("/api/memo",{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ ...payload, confirm:true, answers }) });
+          const d2 = await r2.json();
+          memoOut.innerHTML = d2.html; memoOut.classList.remove("hidden"); memoPrintBtn.disabled = false; memoOut.scrollIntoView({behavior:"smooth"});
+        };
+      } else if(data.html){
+        memoOut.innerHTML = data.html; memoOut.classList.remove("hidden"); memoPrintBtn.disabled = false;
+      }
+    });
+    memoPrintBtn.addEventListener("click", ()=> window.print());
+
+    // Translation
+    const trBtn = document.getElementById("tr-run");
+    const trOut = document.getElementById("tr-output");
+    const trPrint = document.getElementById("tr-print");
+    trBtn.addEventListener("click", async ()=>{
+      const p = profileOrAlert(); if(!p) return;
+      const source = document.getElementById("tr-source").value.trim();
+      if(!source) return alert("Paste English text to translate.");
+      const certify = document.getElementById("tr-cert").checked;
+      const kb = document.getElementById("tr-kb").checked;
+      const r = await fetch("/api/translate",{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ source, certify, kb, profile: p }) });
+      const { arabic } = await r.json();
+      trOut.textContent = ""; trOut.classList.remove("hidden");
+      trOut.innerHTML = `<div class="print-page arabic rtl whitespace-pre-wrap">${arabic}</div>`;
+      trPrint.disabled = false;
+      trOut.scrollIntoView({ behavior:"smooth" });
+    });
+    trPrint.addEventListener("click", ()=> window.print());
+
+    // Letter
+    const letterForm = document.getElementById("letter-form");
+    const letterOut  = document.getElementById("letter-output");
+    const letterPrint= document.getElementById("letter-print");
+    letterForm.addEventListener("submit", async (e)=>{
+      e.preventDefault();
+      const p = profileOrAlert(); if(!p) return;
+      const fd = new FormData(letterForm); const payload = Object.fromEntries(fd.entries());
+      payload.profile = p;
+      const r = await fetch("/api/letter",{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify(payload) });
+      const { html } = await r.json();
+      letterOut.innerHTML = html; letterOut.classList.remove("hidden"); letterPrint.disabled = false;
+    });
+    letterPrint.addEventListener("click", ()=> window.print());
+
+    // KB Search
+    document.getElementById("kb-search").addEventListener("click", async ()=>{
+      const q = document.getElementById("kb-q").value.trim(); if(!q) return;
+      const r = await fetch("/api/kb/search",{ method:"POST", headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ q }) });
+      const { items } = await r.json();
+      const box = document.getElementById("kb-results"); box.innerHTML = "";
+      if(!items.length){ box.innerHTML = `<div class="text-zinc-400">No results.</div>`; return; }
+      items.forEach(it=>{
+        const el = document.createElement("div");
+        el.className = "card p-3";
+        el.innerHTML = `
+          <div class="text-sm font-bold">${it.title}
+            <span class="text-xs text-zinc-400">[${it.jurisdiction.join(", ")}] • v${it.version} • as‑of ${it.as_of}</span></div>
+          <div class="text-sm mt-1">${it.summaryEN}</div>
+          <div class="arabic rtl text-sm mt-2 text-zinc-800 bg-zinc-100 p-2 rounded">${it.summaryAR}</div>
+          <button class="service-btn mt-3" data-id="${it.id}">Use as context</button>
+        `;
+        el.querySelector("button").addEventListener("click", async ()=>{
+          showPanel("chat"); document.getElementById("chat-input").value = `Use KB: ${it.title} — Answer in EN then AR.`;
+        });
+        box.appendChild(el);
+      });
+    });
+  </script>
+</body>
+</html>

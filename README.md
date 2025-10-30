@@ -21,10 +21,13 @@ npm run dev
 - Stored in `data/history.json`. Profile in `data/profiles.json`.
 - Uploads under `/uploads`.
 
-## Re-index KB
-```bash
-curl -X POST http://localhost:3000/api/kb/index -H 'x-admin-key: 4868'
-```
+## Knowledge Base cache & reindexing
+- Cached embeddings are stored at `data/kb_cache.json` (directory configurable via `DATA_DIR` / `KB_CACHE_DIR`).
+- The expected cache version lives in `app/lib/kbVersion.js`. Startup will hydrate from cache and automatically rebuild if the file is missing or the version mismatches.
+- Trigger a rebuild with admin auth header (`x-admin-key`):
+  - `POST /api/kb/reindex` → rebuilds embeddings, updates cache, returns counts and metadata.
+  - `POST /api/kb/reindex-cache` → forces a cache refresh and responds with `{ ok, version, generatedAt }`.
+- Cache writes are atomic to avoid corruption under concurrent requests.
 
 ## Git
 ```bash

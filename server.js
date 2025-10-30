@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import FormData from 'form-data';
+import { KB_CACHE_VERSION } from './app/lib/kbVersion.js';
 
 const app = express();
 app.use(cors());
@@ -17,11 +18,14 @@ app.use(express.json({ limit: '4mb' }));
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const APP_DIR = path.join(__dirname, 'app');
-const KB_DIR  = path.join(__dirname, 'kb');
+const KB_DIR  = process.env.KB_DIR ? path.resolve(process.env.KB_DIR) : path.join(__dirname, 'kb');
 const UP_DIR  = path.join(__dirname, 'uploads');
-const DATA_DIR= path.join(__dirname, 'data');
+const DATA_DIR= process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(__dirname, 'data');
+const KB_CACHE_DIR = process.env.KB_CACHE_DIR ? path.resolve(process.env.KB_CACHE_DIR) : DATA_DIR;
+const KB_CACHE_PATH = path.join(KB_CACHE_DIR, 'kb_cache.json');
 if (!fs.existsSync(UP_DIR)) fs.mkdirSync(UP_DIR, { recursive: true });
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(KB_CACHE_DIR)) fs.mkdirSync(KB_CACHE_DIR, { recursive: true });
 
 // Static
 app.use('/', express.static(APP_DIR));
@@ -43,6 +47,7 @@ const STT_URL   = 'https://api.openai.com/v1/audio/transcriptions';
 // IMPORTANT: Your fine-tuned model id
 const MODEL_ID  = 'ft:gpt-4.1-nano-2025-04-14:aj-solutions:aidlex-uae-legal-2025-07:CTOxAkj9';
 const EMBED_MODEL = 'text-embedding-3-large';
+const ADMIN_KEY = process.env.ADMIN_KEY || '4868';
 
 // ===== Helpers =====
 async function openaiChat(messages, { temperature=0.2, max_tokens=1200 } = {}) {
@@ -91,6 +96,16 @@ function logEvent(mobile, type, summary) {
 // ===== KB (embedding index at boot) =====
 const kbFiles = [];
 const kbChunks = [];
+let kbCacheInfo = { version: null, generatedAt: null, files: 0, chunks: 0, source: 'uninitialized' };
+
+let embedder = openaiEmbed;
+if (process.env.KB_EMBED_STRATEGY === 'stub') {
+  embedder = async texts => texts.map((_, idx) => Array(8).fill(idx));
+}
+
+function setKbEmbedder(fn) {
+  embedder = fn;
+}
 
 function readAllFiles(dir) {
   const out = [];
@@ -136,8 +151,30 @@ function extractSection(md, title){
   const section = next>=0 ? after.slice(0,next) : after;
   return section.trim().replace(/^\s*[\r\n]+/,'').slice(0, 600);
 }
-async function indexKB() {
-  kbFiles.length = 0; kbChunks.length = 0;
+function applyKbData(files, chunks) {
+  kbFiles.splice(0, kbFiles.length, ...files);
+  kbChunks.splice(0, kbChunks.length, ...chunks);
+}
+function writeKbCache(payload) {
+  const tmpPath = `${KB_CACHE_PATH}.${process.pid}.${Date.now()}.tmp`;
+  fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2), 'utf-8');
+  fs.renameSync(tmpPath, KB_CACHE_PATH);
+}
+function loadKBCacheFromDisk() {
+  if (!fs.existsSync(KB_CACHE_PATH)) return { ok: false, reason: 'missing' };
+  try {
+    const raw = JSON.parse(fs.readFileSync(KB_CACHE_PATH, 'utf-8'));
+    if (raw.version !== KB_CACHE_VERSION) return { ok: false, reason: 'version' };
+    if (!Array.isArray(raw.files) || !Array.isArray(raw.chunks)) return { ok: false, reason: 'shape' };
+    return { ok: true, files: raw.files, chunks: raw.chunks, generatedAt: raw.generatedAt ?? null };
+  } catch (error) {
+    console.warn('Failed to load KB cache', error);
+    return { ok: false, reason: 'invalid' };
+  }
+}
+async function buildKbIndex() {
+  const filesOut = [];
+  const chunksOut = [];
   const files = readAllFiles(KB_DIR);
   for (const fp of files) {
     const raw = fs.readFileSync(fp, 'utf-8');
@@ -151,16 +188,71 @@ async function indexKB() {
       summaryAR: extractSection(ar, '**Summary**'),
       bodyEN: en, bodyAR: ar
     };
-    kbFiles.push(fileRec);
+    filesOut.push(fileRec);
     const textForEmbed = `${JSON.stringify(meta)}\n${en}\n${ar}`;
     const parts = chunk(textForEmbed, 2500, 250);
-    const embeds = await openaiEmbed(parts);
+    const embeds = await embedder(parts);
+    if (!Array.isArray(embeds) || embeds.length !== parts.length) {
+      throw new Error('Embedding function returned unexpected result count');
+    }
     embeds.forEach((emb, idx) => {
-      kbChunks.push({ id: `${id}#${idx}`, fileId: id, text: parts[idx], meta, embedding: emb });
+      chunksOut.push({ id: `${id}#${idx}`, fileId: id, text: parts[idx], meta, embedding: emb });
     });
   }
+
+  applyKbData(filesOut, chunksOut);
+  const generatedAt = Date.now();
+  writeKbCache({ version: KB_CACHE_VERSION, generatedAt, files: filesOut, chunks: chunksOut });
+  kbCacheInfo = { version: KB_CACHE_VERSION, generatedAt, files: filesOut.length, chunks: chunksOut.length, source: 'reindex' };
+  return kbCacheInfo;
 }
-await indexKB();
+
+let reindexPromise = null;
+async function reindexKB() {
+  if (!reindexPromise) {
+    reindexPromise = (async () => {
+      try {
+        return await buildKbIndex();
+      } finally {
+        reindexPromise = null;
+      }
+    })();
+  }
+  return reindexPromise;
+}
+
+let kbInitPromise;
+function initializeKB() {
+  if (!kbInitPromise) {
+    kbInitPromise = (async () => {
+      const cached = loadKBCacheFromDisk();
+      if (cached.ok) {
+        applyKbData(cached.files, cached.chunks);
+        kbCacheInfo = {
+          version: KB_CACHE_VERSION,
+          generatedAt: cached.generatedAt,
+          files: cached.files.length,
+          chunks: cached.chunks.length,
+          source: 'cache'
+        };
+        return kbCacheInfo;
+      }
+      return await reindexKB();
+    })();
+  }
+  return kbInitPromise;
+}
+
+const kbReady = initializeKB();
+await kbReady;
+
+function getKbState() {
+  return {
+    files: [...kbFiles],
+    chunks: [...kbChunks],
+    info: { ...kbCacheInfo }
+  };
+}
 
 // ===== System Prompts =====
 const SYS_BASE = `You are AIDLEX.AE, a bilingual UAE-legal assistant. Style: formal, precise, premium.
@@ -419,14 +511,35 @@ app.post('/api/kb/search', async (req, res) => {
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
 
-// KB: re-index
-app.post('/api/kb/index', async (req, res) => {
+async function handleKbReindex(req, res, minimal=false) {
   try {
     const key = req.headers['x-admin-key'];
-    if (key !== (process.env.ADMIN_KEY||'4868')) return res.status(403).json({ error:'Forbidden' });
-    await indexKB(); res.json({ ok:true, files: kbFiles.length, chunks: kbChunks.length });
+    if (key !== ADMIN_KEY) return res.status(403).json({ error:'Forbidden' });
+    const info = await reindexKB();
+    if (minimal) {
+      return res.json({ ok: true, version: info.version, generatedAt: info.generatedAt, files: info.files, chunks: info.chunks });
+    }
+    res.json({ ok: true, version: info.version, files: info.files, chunks: info.chunks, generatedAt: info.generatedAt, source: info.source });
   } catch (e) { res.status(500).json({ error: String(e) }); }
-});
+}
+
+// KB: re-index
+app.post('/api/kb/reindex', (req, res) => handleKbReindex(req, res));
+app.post('/api/kb/index', (req, res) => handleKbReindex(req, res));
+app.post('/api/kb/reindex-cache', (req, res) => handleKbReindex(req, res, true));
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`AIDLEX.AE running on http://localhost:${port}`));
+if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
+  app.listen(port, () => console.log(`AIDLEX.AE running on http://localhost:${port}`));
+}
+
+export {
+  app,
+  initializeKB,
+  reindexKB,
+  loadKBCacheFromDisk,
+  getKbState,
+  setKbEmbedder,
+  kbReady,
+  KB_CACHE_PATH
+};

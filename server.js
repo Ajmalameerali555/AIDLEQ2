@@ -10,6 +10,7 @@ import { fileURLToPath } from 'url';
 import FormData from 'form-data';
 
 const app = express();
+app.set('trust proxy', 1);
 app.use(cors());
 app.use(express.json({ limit: '4mb' }));
 
@@ -35,6 +36,7 @@ const upload = multer({
 
 // OpenAI
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const ADMIN_KEY = process.env.ADMIN_KEY || '4868';
 const CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const EMBED_URL = 'https://api.openai.com/v1/embeddings';
 const TTS_URL   = 'https://api.openai.com/v1/audio/speech';
@@ -74,6 +76,63 @@ function cosine(a, b) {
 // Data helpers
 const PROFILES_FP = path.join(DATA_DIR, 'profiles.json');
 const HISTORY_FP  = path.join(DATA_DIR, 'history.json');
+const METRIC_STATE = {
+  start: Date.now(),
+  activeSSE: 0,
+  incrementSSE() { this.activeSSE += 1; },
+  decrementSSE() { this.activeSSE = Math.max(0, this.activeSSE - 1); }
+};
+app.locals.metrics = METRIC_STATE;
+
+const adminRateLimitWindowMs = 60 * 1000;
+const adminRateLimitMax = 10;
+const adminRateHits = new Map();
+const adminCleanupTimer = setInterval(() => {
+  const now = Date.now();
+  for (const [ip, hits] of adminRateHits.entries()) {
+    const recent = hits.filter(ts => now - ts <= adminRateLimitWindowMs);
+    if (recent.length) adminRateHits.set(ip, recent);
+    else adminRateHits.delete(ip);
+  }
+}, adminRateLimitWindowMs);
+if (typeof adminCleanupTimer.unref === 'function') adminCleanupTimer.unref();
+
+function adminRateLimiter(req, res, next) {
+  const now = Date.now();
+  const windowStart = now - adminRateLimitWindowMs;
+  const ip = (req.ip || req.headers['x-forwarded-for'] || req.connection?.remoteAddress || 'unknown').toString();
+  const hits = adminRateHits.get(ip) || [];
+  const recent = hits.filter(ts => ts > windowStart);
+  recent.push(now);
+  adminRateHits.set(ip, recent);
+  if (recent.length > adminRateLimitMax) {
+    res.set('Retry-After', Math.ceil(adminRateLimitWindowMs / 1000));
+    return res.status(429).json({ error: 'Too many admin requests. Please slow down.' });
+  }
+  next();
+}
+
+function ensureAdminKey(req, res, next) {
+  const key = req.headers['x-admin-key'];
+  if (key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+  next();
+}
+
+function toMB(bytes) {
+  return Number((bytes / (1024 * 1024)).toFixed(2));
+}
+
+function countFilesRecursive(dir) {
+  if (!fs.existsSync(dir)) return 0;
+  let count = 0;
+  for (const entry of fs.readdirSync(dir)) {
+    const full = path.join(dir, entry);
+    const stat = fs.statSync(full);
+    if (stat.isDirectory()) count += countFilesRecursive(full);
+    else count += 1;
+  }
+  return count;
+}
 function readJSON(fp, fallback) {
   try { return JSON.parse(fs.readFileSync(fp, 'utf-8')); } catch { return fallback; }
 }
@@ -423,10 +482,42 @@ app.post('/api/kb/search', async (req, res) => {
 app.post('/api/kb/index', async (req, res) => {
   try {
     const key = req.headers['x-admin-key'];
-    if (key !== (process.env.ADMIN_KEY||'4868')) return res.status(403).json({ error:'Forbidden' });
+    if (key !== ADMIN_KEY) return res.status(403).json({ error:'Forbidden' });
     await indexKB(); res.json({ ok:true, files: kbFiles.length, chunks: kbChunks.length });
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
+
+const adminRouter = express.Router();
+adminRouter.use(adminRateLimiter);
+adminRouter.use(ensureAdminKey);
+adminRouter.get('/health', (req, res) => {
+  const memoryUsage = process.memoryUsage();
+  const memory = {
+    rssMB: toMB(memoryUsage.rss),
+    heapTotalMB: toMB(memoryUsage.heapTotal),
+    heapUsedMB: toMB(memoryUsage.heapUsed),
+    externalMB: toMB(memoryUsage.external)
+  };
+  const history = readJSON(HISTORY_FP, []);
+  const cutoff = Date.now() - (12 * 60 * 60 * 1000);
+  const sessions = new Set(
+    history
+      .filter(h => h && typeof h === 'object' && h.ts >= cutoff && h.mobile && h.mobile !== 'unknown')
+      .map(h => h.mobile)
+  ).size;
+  const uploads = countFilesRecursive(UP_DIR);
+  const uptimeSeconds = Number(((Date.now() - METRIC_STATE.start) / 1000).toFixed(1));
+  res.json({
+    uptime: uptimeSeconds,
+    memory,
+    sessions,
+    kbReady: kbChunks.length > 0,
+    uploads,
+    SSEconnections: METRIC_STATE.activeSSE
+  });
+});
+
+app.use('/admin', adminRouter);
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => console.log(`AIDLEX.AE running on http://localhost:${port}`));

@@ -26,6 +26,12 @@ npm run dev
 curl -X POST http://localhost:3000/api/kb/index -H 'x-admin-key: 4868'
 ```
 
+## Security and Monitoring
+- **Admin key** – privileged endpoints (`/api/kb/index`, `/admin/*`) require the `x-admin-key` header. Set `ADMIN_KEY` in `.env` to override the default `4868`.
+- **Admin rate limiting** – `/admin/*` routes are capped at 10 requests per minute per IP to protect the control plane from brute-force or noisy polling.
+- **Health endpoint** – `GET /admin/health` (with the admin key) returns uptime, memory usage, recent session counts, KB readiness, upload totals, and active Server-Sent Event (SSE) connections for quick diagnostics.
+- **Monitoring tips** – log and alert on repeated 403/429 responses, watch the `kbReady` flag after deployments, and track upload volume to anticipate storage increases.
+
 ## Git
 ```bash
 git init

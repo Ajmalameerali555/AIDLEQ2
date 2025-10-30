@@ -555,8 +555,8 @@
       } catch {}
       const r = await fetch('/api/upload',{ method:'POST', body:fd, headers });
       const { files } = await r.json();
-      files.forEach(f=> filesSelected.push(f.url));
-      chatFilesList.innerHTML = filesSelected.map(u=>`<span class="badge mr-1">attached</span> <a class="underline" target="_blank" href="${u}">${u}</a>`).join("<br>");
+      files.forEach(f=> filesSelected.push(f));
+      chatFilesList.innerHTML = filesSelected.map(f=>`<span class="badge mr-1">attached</span> <a class="underline" target="_blank" href="${f.url}">${f.name}</a>`).join("<br>");
     });
     function sendMessage(){
       const q = chatInput.value.trim(); if(!q) return;
@@ -564,7 +564,7 @@
       chatInput.value = "";
       const thinking = document.createElement('div'); thinking.className = 'text-xs text-zinc-400 px-4'; thinking.innerHTML = 'AIDLEX.AE is thinking <span class="dot"></span><span class="dot"></span><span class="dot"></span>'; log.appendChild(thinking);
       const profile = JSON.parse(localStorage.getItem('aidlex_profile')||'{}');
-      fetch('/api/chat',{ method:'POST', headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ query:q, files: filesSelected, profile }) })
+      fetch('/api/chat',{ method:'POST', headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ query:q, files: filesSelected.map(f=>f.url), profile }) })
         .then(r=>r.json()).then(d=>{
           thinking.remove();
           bubble('assistant', d.text || '(no response)');

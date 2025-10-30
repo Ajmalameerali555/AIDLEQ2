@@ -3,7 +3,8 @@
   "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "NODE_ENV=test node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",

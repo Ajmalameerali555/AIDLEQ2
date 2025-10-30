@@ -6,6 +6,7 @@ import fetch from 'node-fetch';
 import multer from 'multer';
 import fs from 'fs';
 import path from 'path';
+import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import FormData from 'form-data';
 
@@ -18,19 +19,55 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const APP_DIR = path.join(__dirname, 'app');
 const KB_DIR  = path.join(__dirname, 'kb');
-const UP_DIR  = path.join(__dirname, 'uploads');
 const DATA_DIR= path.join(__dirname, 'data');
-if (!fs.existsSync(UP_DIR)) fs.mkdirSync(UP_DIR, { recursive: true });
+const SECURE_UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
+const UPLOADS_META_FP = path.join(DATA_DIR, 'uploads.json');
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
+if (!fs.existsSync(SECURE_UPLOAD_DIR)) fs.mkdirSync(SECURE_UPLOAD_DIR, { recursive: true });
 
 // Static
 app.use('/', express.static(APP_DIR));
-app.use('/uploads', express.static(UP_DIR));
 
 // Multer (uploads)
-const upload = multer({
-  dest: UP_DIR,
-  limits: { fileSize: 10 * 1024 * 1024, files: 10 }
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, SECURE_UPLOAD_DIR),
+  filename: (req, file, cb) => {
+    const id = randomUUID();
+    const ext = path.extname(file.originalname || '').slice(0, 20);
+    const safeExt = ext.replace(/[^\w.\-]/g, '');
+    const storedName = `${id}${safeExt}`;
+    file.uploadId = id;
+    file.storedFilename = storedName;
+    cb(null, storedName);
+  }
+});
+
+const ALLOWED_MIME_TYPES = new Set([
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+]);
+
+const evidenceFileFilter = (req, file, cb) => {
+  if (ALLOWED_MIME_TYPES.has(file.mimetype)) return cb(null, true);
+  const err = new Error(`Unsupported media type: ${file.mimetype}`);
+  err.statusCode = 415;
+  cb(err);
+};
+
+const uploadEvidence = multer({
+  storage,
+  limits: { fileSize: 10 * 1024 * 1024, files: 10 },
+  fileFilter: evidenceFileFilter
+});
+
+const uploadAudio = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 }
 });
 
 // OpenAI
@@ -160,7 +197,9 @@ async function indexKB() {
     });
   }
 }
-await indexKB();
+if (process.env.NODE_ENV !== 'test') {
+  await indexKB();
+}
 
 // ===== System Prompts =====
 const SYS_BASE = `You are AIDLEX.AE, a bilingual UAE-legal assistant. Style: formal, precise, premium.
@@ -219,16 +258,70 @@ app.get('/api/history', (req, res) => {
 });
 
 // Upload evidence
-app.post('/api/upload', upload.array('files', 10), (req, res) => {
+function persistUploads(records) {
+  const existing = readJSON(UPLOADS_META_FP, []);
+  existing.push(...records);
+  writeJSON(UPLOADS_META_FP, existing);
+}
+
+function buildDownloadUrl(id, token) {
+  return `/api/uploads/${id}?token=${token}`;
+}
+
+app.post('/api/upload', (req, res) => {
+  uploadEvidence.array('files', 10)(req, res, (err) => {
+    if (err) {
+      if (err.statusCode === 415) return res.status(415).json({ error: 'Unsupported media type' });
+      return res.status(400).json({ error: err.message });
+    }
+    try {
+      const mobile = (req.headers['x-mobile'] || '').toString();
+      const savedRecords = [];
+      const responseFiles = [];
+      for (const f of req.files || []) {
+        const token = randomUUID();
+        const record = {
+          id: f.uploadId,
+          token,
+          originalName: f.originalname,
+          storedFilename: f.storedFilename || f.filename,
+          mimetype: f.mimetype,
+          size: f.size,
+          mobile,
+          uploadedAt: Date.now()
+        };
+        savedRecords.push(record);
+        responseFiles.push({ name: record.originalName, url: buildDownloadUrl(record.id, token) });
+      }
+      if (savedRecords.length) {
+        persistUploads(savedRecords);
+        logEvent(mobile, 'upload', `Uploaded ${savedRecords.length} file(s)`);
+      }
+      res.json({ files: responseFiles });
+    } catch (e) {
+      res.status(400).json({ error: String(e) });
+    }
+  });
+});
+
+app.get('/api/uploads/:id', (req, res) => {
   try {
-    const mobile = (req.headers['x-mobile'] || '').toString();
-    const files = (req.files || []).map(f => ({
-      name: f.originalname,
-      url: `/uploads/${path.basename(f.path)}`
-    }));
-    if (files.length) logEvent(mobile, 'upload', `Uploaded ${files.length} file(s)`);
-    res.json({ files });
-  } catch (e) { res.status(400).json({ error: String(e) }); }
+    const token = String(req.query.token || '');
+    const id = req.params.id;
+    if (!token) return res.status(401).json({ error: 'Missing token' });
+    const entries = readJSON(UPLOADS_META_FP, []);
+    const record = entries.find(r => r.id === id);
+    if (!record) return res.status(404).json({ error: 'Not found' });
+    if (record.token !== token) return res.status(403).json({ error: 'Forbidden' });
+    const filePath = path.join(SECURE_UPLOAD_DIR, record.storedFilename);
+    if (!fs.existsSync(filePath)) return res.status(410).json({ error: 'File no longer available' });
+    res.setHeader('Content-Type', record.mimetype || 'application/octet-stream');
+    const dispositionName = encodeURIComponent(record.originalName || 'download');
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${dispositionName}`);
+    fs.createReadStream(filePath).pipe(res);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
 });
 
 // TTS (fallback) - OpenAI tts-1 -> mp3
@@ -258,7 +351,7 @@ app.post('/api/tts', async (req, res) => {
 });
 
 // STT (Whisper)
-app.post('/api/stt', upload.single('audio'), async (req, res) => {
+app.post('/api/stt', uploadAudio.single('audio'), async (req, res) => {
   try {
     const f = req.file;
     if (!f) return res.status(400).json({ error: 'audio missing' });
@@ -429,4 +522,9 @@ app.post('/api/kb/index', async (req, res) => {
 });
 
 const port = process.env.PORT || 3000;
-app.listen(port, () => console.log(`AIDLEX.AE running on http://localhost:${port}`));
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(port, () => console.log(`AIDLEX.AE running on http://localhost:${port}`));
+}
+
+export { app, SECURE_UPLOAD_DIR, UPLOADS_META_FP };
+export default app;

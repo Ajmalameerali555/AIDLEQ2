@@ -24,6 +24,9 @@ const DATA_DIR= path.join(__dirname, 'data');
 if (!fs.existsSync(UP_DIR)) fs.mkdirSync(UP_DIR, { recursive: true });
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RETENTION_MS = 7 * DAY_MS;
+
 // Static
 app.use('/', express.static(APP_DIR));
 app.use('/uploads', express.static(UP_DIR));
@@ -147,6 +150,37 @@ function logEvent(mobile, type, summary) {
   writeJSON(HISTORY_FP, history);
 }
 
+function cleanupUploads() {
+  if (!fs.existsSync(UP_DIR)) return;
+  const now = Date.now();
+  const deleted = [];
+
+  for (const entry of fs.readdirSync(UP_DIR)) {
+    const fullPath = path.join(UP_DIR, entry);
+    let stats;
+    try {
+      stats = fs.statSync(fullPath);
+    } catch {
+      continue;
+    }
+
+    if (!stats.isFile()) continue;
+
+    if (now - stats.mtimeMs > RETENTION_MS) {
+      try {
+        fs.unlinkSync(fullPath);
+        deleted.push(entry);
+      } catch (err) {
+        logEvent('system', 'upload-cleanup-error', `Failed to delete ${entry}: ${err.message}`);
+      }
+    }
+  }
+
+  for (const name of deleted) {
+    logEvent('system', 'upload-cleanup', `Deleted expired upload ${name}`);
+  }
+}
+
 // ===== KB (embedding index at boot) =====
 const kbFiles = [];
 const kbChunks = [];
@@ -220,6 +254,9 @@ async function indexKB() {
   }
 }
 await indexKB();
+
+cleanupUploads();
+setInterval(cleanupUploads, DAY_MS);
 
 // ===== System Prompts =====
 const SYS_BASE = `You are AIDLEX.AE, a bilingual UAE-legal assistant. Style: formal, precise, premium.

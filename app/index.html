@@ -48,9 +48,17 @@
       background:#1b1f2a; border:1px solid #2a2f3a; border-radius:999px; cursor:pointer;
     }
     .compose .btn:hover{ background:#2a3140 }
-    .bubble{border-radius:16px; padding:12px 14px}
+    .bubble{border-radius:16px; padding:12px 14px; transition:border-color .25s ease, box-shadow .25s ease}
     .bubble.assistant{ background:#16181d; border:1px solid #2a2f3a }
     .bubble.user{ background:#19324b; border:1px solid #32597f }
+    .bubble.streaming{ border-color:#3b82f6; box-shadow:0 0 0 1px rgba(59,130,246,.25); }
+    .typing-indicator{ display:flex; align-items:center; gap:.3rem; font-size:.75rem; color:#94a3b8; opacity:.85; transition:opacity .25s ease; padding-left:.2rem; }
+    .typing-indicator .dot{ background:#60a5fa; opacity:.55; }
+    .typing-indicator.fade-out{ opacity:0; }
+    .assistant-tools button{
+      text-decoration:underline; background:none; border:none; color:inherit;
+      cursor:pointer; padding:0;
+    }
     .dot{ width:6px;height:6px;background:#9aa3b2;border-radius:999px;display:inline-block;margin:0 2px;opacity:.3;animation:blink 1.2s infinite; }
     .dot:nth-child(2){animation-delay:.2s} .dot:nth-child(3){animation-delay:.4s}
     @keyframes blink{0%,100%{opacity:.2} 50%{opacity:1}}
@@ -524,20 +532,50 @@
     const chatFiles = document.getElementById('chat-files');
     const chatFilesList = document.getElementById('chat-files-list');
     const filesSelected = [];
-    function bubble(role, text){
+    function makeAssistantTools(getText){
+      const tools = document.createElement('div');
+      tools.className = 'assistant-tools mt-1 text-xs text-zinc-400 flex items-center gap-2';
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = '🔊 Read aloud';
+      btn.onclick = ()=> speakText(getText());
+      tools.appendChild(btn);
+      return tools;
+    }
+    function bubble(role, text='', opts={}){
       const wrap = document.createElement('div');
       wrap.className = "mb-3";
-      wrap.innerHTML = `<div class="bubble ${role} whitespace-pre-wrap">${text}</div>`;
-      if(role==='assistant'){
-        const tools = document.createElement('div');
-        tools.className = 'mt-1 text-xs text-zinc-400 flex items-center gap-2';
-        const btn = document.createElement('button');
-        btn.textContent = '🔊 Read aloud';
-        btn.onclick = ()=> speakText(text);
-        tools.appendChild(btn);
-        wrap.appendChild(tools);
+      const bubbleEl = document.createElement('div');
+      bubbleEl.className = `bubble ${role} whitespace-pre-wrap`;
+      bubbleEl.textContent = text;
+      if(opts.typing){ bubbleEl.classList.add('streaming'); }
+      wrap.appendChild(bubbleEl);
+      let typingRow = null;
+      if(opts.typing){
+        typingRow = document.createElement('div');
+        typingRow.className = 'typing-indicator mt-2';
+        typingRow.innerHTML = "<span class=\"dot\"></span><span class=\"dot\"></span><span class=\"dot\"></span><span>Drafting…</span>";
+        wrap.appendChild(typingRow);
+      } else if(role==='assistant'){
+        wrap.appendChild(makeAssistantTools(()=> bubbleEl.textContent.trim()));
       }
       log.appendChild(wrap);
+      log.scrollTop = log.scrollHeight;
+      return { wrap, bubble: bubbleEl, typingRow };
+    }
+    function finalizeAssistantBubble(entry, text){
+      if(!entry) return;
+      const finalText = typeof text === 'string' ? text : '';
+      const output = finalText || '(no response)';
+      entry.bubble.textContent = output;
+      entry.bubble.classList.remove('streaming');
+      if(entry.typingRow){
+        entry.typingRow.classList.add('fade-out');
+        setTimeout(()=> entry.typingRow?.remove(), 220);
+      }
+      if(!entry.wrap.querySelector('.assistant-tools')){
+        entry.wrap.appendChild(makeAssistantTools(()=> entry.bubble.textContent.trim()));
+      }
       log.scrollTop = log.scrollHeight;
     }
     document.getElementById('btn-speak-last').addEventListener('click', ()=>{
@@ -562,14 +600,72 @@
       const q = chatInput.value.trim(); if(!q) return;
       bubble('user', q);
       chatInput.value = "";
-      const thinking = document.createElement('div'); thinking.className = 'text-xs text-zinc-400 px-4'; thinking.innerHTML = 'AIDLEX.AE is thinking <span class="dot"></span><span class="dot"></span><span class="dot"></span>'; log.appendChild(thinking);
-      const profile = JSON.parse(localStorage.getItem('aidlex_profile')||'{}');
-      fetch('/api/chat',{ method:'POST', headers:{ "Content-Type":"application/json" }, body:JSON.stringify({ query:q, files: filesSelected, profile }) })
-        .then(r=>r.json()).then(d=>{
-          thinking.remove();
-          bubble('assistant', d.text || '(no response)');
-        }).catch(err=>{
-          thinking.remove(); bubble('assistant', 'Error: '+err);
+      let profile = {};
+      try { profile = JSON.parse(localStorage.getItem('aidlex_profile')||'{}'); }
+      catch {}
+      const payload = { query: q, files: [...filesSelected], profile };
+      const pending = bubble('assistant', '', { typing:true });
+      if(window.EventSource){
+        let url;
+        try { url = '/api/chat?payload=' + encodeURIComponent(JSON.stringify(payload)); }
+        catch(e){ finalizeAssistantBubble(pending, 'Error preparing request.'); return; }
+        let fullText = '';
+        let serverError = '';
+        let finished = false;
+        const finish = (text)=>{
+          if(finished) return;
+          finished = true;
+          finalizeAssistantBubble(pending, text);
+        };
+        const es = new EventSource(url);
+        es.onmessage = (ev)=>{
+          if(!ev.data) return;
+          try {
+            const data = JSON.parse(ev.data);
+            if(data.token){
+              fullText += data.token;
+              pending.bubble.textContent = fullText;
+              log.scrollTop = log.scrollHeight;
+            }
+          } catch {
+            fullText += ev.data;
+            pending.bubble.textContent = fullText;
+            log.scrollTop = log.scrollHeight;
+          }
+        };
+        es.addEventListener('server-error', (ev)=>{
+          try {
+            const info = JSON.parse(ev.data);
+            if(info?.message) serverError = info.message;
+          } catch {
+            serverError = ev.data || serverError;
+          }
+        });
+        es.addEventListener('done', ()=>{
+          es.close();
+          if(serverError){
+            finish(`Error: ${serverError}`);
+            return;
+          }
+          finish(fullText || '(no response)');
+        });
+        es.onerror = ()=>{
+          if(finished) return;
+          es.close();
+          const msg = serverError ? `Error: ${serverError}` : (fullText || 'Error receiving response.');
+          finish(msg);
+        };
+        return;
+      }
+      fetch('/api/chat',{ method:'POST', headers:{ "Content-Type":"application/json" }, body:JSON.stringify(payload) })
+        .then(r=>r.json())
+        .then(d=>{
+          const txt = typeof d.text === 'string' ? d.text : '';
+          finalizeAssistantBubble(pending, txt);
+        })
+        .catch(err=>{
+          const msg = err?.message ? `Error: ${err.message}` : `Error: ${err}`;
+          finalizeAssistantBubble(pending, msg);
         });
     }
     document.getElementById('btn-send').addEventListener('click', sendMessage);

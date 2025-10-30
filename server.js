@@ -276,6 +276,100 @@ app.post('/api/stt', upload.single('audio'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
 
+// Chat (streaming via SSE when available, fallback to POST)
+app.get('/api/chat', async (req, res) => {
+  const rawPayload = req.query?.payload;
+  if (!rawPayload) return res.status(400).json({ error: 'missing payload' });
+  let payload;
+  try { payload = JSON.parse(rawPayload); }
+  catch { return res.status(400).json({ error: 'invalid payload' }); }
+  const q = String(payload?.query ?? '').slice(0, 8000);
+  if (!q) return res.status(400).json({ error: 'empty query' });
+  const files = Array.isArray(payload?.files) ? payload.files : [];
+  const profile = (payload?.profile && typeof payload.profile === 'object') ? payload.profile : {};
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  if (res.flushHeaders) res.flushHeaders();
+
+  const contextNote = files.length ? `Attached files (URLs):\n${files.join('\n')}\n` : '';
+  const messages = [
+    { role: 'system', content: SYS_BASE },
+    { role: 'user', content: `User: ${profile.name||''} ${profile.mobile||''} ${profile.email||''}\n${contextNote}${q}` }
+  ];
+
+  const controller = new AbortController();
+  req.on('close', () => controller.abort());
+
+  let doneSent = false;
+  const sendDone = () => {
+    if (doneSent || res.writableEnded) return;
+    doneSent = true;
+    res.write('event: done\ndata: {}\n\n');
+    res.end();
+  };
+
+  let fullText = '';
+  try {
+    const r = await fetch(CHAT_URL, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: MODEL_ID, messages, temperature: 0.2, max_tokens: 1200, stream: true }),
+      signal: controller.signal
+    });
+    if (!r.ok) throw new Error(`OpenAI chat error ${r.status}: ${await r.text()}`);
+    if (!r.body) throw new Error('OpenAI stream missing body');
+    const reader = r.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let idx;
+      while ((idx = buffer.indexOf('\n\n')) >= 0) {
+        const chunk = buffer.slice(0, idx);
+        buffer = buffer.slice(idx + 2);
+        const lines = chunk.split('\n');
+        let dataStr = '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data:')) continue;
+          dataStr += trimmed.slice(5).trimStart();
+        }
+        if (!dataStr) continue;
+        if (dataStr === '[DONE]') {
+          sendDone();
+          logEvent(profile.mobile, 'chat', `Q: ${q.slice(0,100)}... | A: ${fullText.slice(0,100)}...`);
+          return;
+        }
+        try {
+          const parsed = JSON.parse(dataStr);
+          const delta = parsed?.choices?.[0]?.delta?.content || '';
+          if (delta) {
+            fullText += delta;
+            res.write(`data: ${JSON.stringify({ token: delta })}\n\n`);
+          }
+        } catch (err) {
+          // ignore malformed chunks
+        }
+      }
+    }
+    sendDone();
+    logEvent(profile.mobile, 'chat', `Q: ${q.slice(0,100)}... | A: ${fullText.slice(0,100)}...`);
+  } catch (err) {
+    if (controller.signal.aborted) return;
+    const message = err?.message || String(err);
+    if (!res.writableEnded) {
+      res.write(`event: server-error\ndata: ${JSON.stringify({ message })}\n\n`);
+      sendDone();
+    }
+    logEvent(profile.mobile, 'chat-error', `Q: ${q.slice(0,100)}... :: ${message}`);
+  }
+});
+
 // Chat (attachments listed as context)
 app.post('/api/chat', async (req, res) => {
   try {

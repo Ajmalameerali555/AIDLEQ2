@@ -243,9 +243,14 @@ async function ensureKbLoaded({ forceReindex = false } = {}) {
       return { source: 'built', ...indexed };
     })();
   }
-  const result = await kbLoadPromise;
-  kbLoadPromise = Promise.resolve(result);
-  return result;
+  try {
+    const result = await kbLoadPromise;
+    kbLoadPromise = Promise.resolve(result);
+    return result;
+  } catch (err) {
+    kbLoadPromise = null;
+    throw err;
+  }
 }
 
 // ===== System Prompts =====

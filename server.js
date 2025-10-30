@@ -23,6 +23,13 @@ const DATA_DIR= path.join(__dirname, 'data');
 if (!fs.existsSync(UP_DIR)) fs.mkdirSync(UP_DIR, { recursive: true });
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
+const ADMIN_KEY = process.env.ADMIN_KEY || '4868';
+const METRICS_FP = path.join(DATA_DIR, 'metrics.json');
+const SSE_ROUTES = new Set(['/api/chat']);
+const KB_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const KB_CACHE_MAX = 50;
+const kbSearchCache = new Map();
+
 // Static
 app.use('/', express.static(APP_DIR));
 app.use('/uploads', express.static(UP_DIR));
@@ -53,6 +60,7 @@ async function openaiChat(messages, { temperature=0.2, max_tokens=1200 } = {}) {
   });
   if (!r.ok) throw new Error(`OpenAI chat error ${r.status}: ${await r.text()}`);
   const j = await r.json();
+  recordTokenUsage(j.usage, { type: 'chat' });
   return j.choices?.[0]?.message?.content?.trim() || '';
 }
 async function openaiEmbed(texts) {
@@ -63,6 +71,7 @@ async function openaiEmbed(texts) {
   });
   if (!r.ok) throw new Error(`OpenAI embed error ${r.status}: ${await r.text()}`);
   const j = await r.json();
+  recordTokenUsage(j.usage, { type: 'embedding' });
   return j.data.map(d => d.embedding);
 }
 function cosine(a, b) {
@@ -87,6 +96,145 @@ function logEvent(mobile, type, summary) {
   if (history.length > 1000) history.splice(0, history.length - 1000);
   writeJSON(HISTORY_FP, history);
 }
+
+function createDefaultMetrics() {
+  return {
+    requestLog: [],
+    requestCounts: {},
+    userCounts: {},
+    dailyCounts: {},
+    tokens: { prompt: 0, completion: 0, total: 0, embedding: 0 },
+    sse: { samples: [] },
+    cache: { kb: { hits: 0, misses: 0 } }
+  };
+}
+
+function loadMetrics() {
+  const base = createDefaultMetrics();
+  const raw = readJSON(METRICS_FP, null);
+  if (!raw) return base;
+  return {
+    ...base,
+    ...raw,
+    requestLog: Array.isArray(raw.requestLog) ? raw.requestLog.slice(-1000) : base.requestLog,
+    requestCounts: { ...base.requestCounts, ...(raw.requestCounts || {}) },
+    userCounts: { ...base.userCounts, ...(raw.userCounts || {}) },
+    dailyCounts: { ...base.dailyCounts, ...(raw.dailyCounts || {}) },
+    tokens: { ...base.tokens, ...(raw.tokens || {}) },
+    sse: {
+      ...base.sse,
+      ...(raw.sse || {}),
+      samples: Array.isArray(raw?.sse?.samples) ? raw.sse.samples.slice(-200) : base.sse.samples
+    },
+    cache: {
+      ...base.cache,
+      ...(raw.cache || {}),
+      kb: { ...base.cache.kb, ...(raw.cache?.kb || {}) }
+    }
+  };
+}
+
+const metrics = loadMetrics();
+let metricsWriteTimer = null;
+
+function scheduleMetricsPersist() {
+  if (metricsWriteTimer) return;
+  metricsWriteTimer = setTimeout(() => {
+    metricsWriteTimer = null;
+    try { writeJSON(METRICS_FP, metrics); }
+    catch (err) { console.error('Failed to persist metrics', err); }
+  }, 500);
+}
+
+function pruneDailyCounts(limit = 60) {
+  const days = Object.keys(metrics.dailyCounts).sort();
+  const excess = days.length - limit;
+  if (excess > 0) {
+    for (let i = 0; i < excess; i++) delete metrics.dailyCounts[days[i]];
+  }
+}
+
+function extractUser(req) {
+  if (!req) return 'anonymous';
+  const headers = req.headers || {};
+  const body = req.body || {};
+  const candidates = [
+    headers['x-mobile'],
+    headers['x-user'],
+    headers['x-user-id'],
+    body.mobile,
+    body?.profile?.mobile,
+    body?.profile?.phone,
+    req.query?.mobile
+  ];
+  const val = candidates.find(Boolean);
+  return (typeof val === 'string' ? val : (val ? String(val) : null)) || 'anonymous';
+}
+
+function recordTokenUsage(usage, { type = 'chat' } = {}) {
+  if (!usage) return;
+  if (type === 'embedding') {
+    const total = usage.total_tokens || 0;
+    metrics.tokens.embedding += total;
+    metrics.tokens.total += total;
+  } else {
+    const prompt = usage.prompt_tokens || 0;
+    const completion = usage.completion_tokens || 0;
+    const total = usage.total_tokens || (prompt + completion);
+    metrics.tokens.prompt += prompt;
+    metrics.tokens.completion += completion;
+    metrics.tokens.total += total;
+  }
+  scheduleMetricsPersist();
+}
+
+function recordCacheStat(name, hit) {
+  if (!metrics.cache[name]) metrics.cache[name] = { hits: 0, misses: 0 };
+  if (hit) metrics.cache[name].hits++;
+  else metrics.cache[name].misses++;
+  scheduleMetricsPersist();
+}
+
+function recordRequestMetrics({ route, method, status, user, duration }) {
+  if (!route || !route.startsWith('/api/')) return;
+  const entry = {
+    ts: Date.now(),
+    route,
+    method,
+    status,
+    user: user || 'anonymous',
+    duration
+  };
+  metrics.requestLog.push(entry);
+  if (metrics.requestLog.length > 1000) metrics.requestLog.shift();
+  metrics.requestCounts[route] = (metrics.requestCounts[route] || 0) + 1;
+  metrics.userCounts[entry.user] = (metrics.userCounts[entry.user] || 0) + 1;
+  const dayKey = new Date(entry.ts).toISOString().slice(0, 10);
+  metrics.dailyCounts[dayKey] = (metrics.dailyCounts[dayKey] || 0) + 1;
+  pruneDailyCounts();
+  if (SSE_ROUTES.has(route)) {
+    if (!Array.isArray(metrics.sse.samples)) metrics.sse.samples = [];
+    metrics.sse.samples.push(duration);
+    if (metrics.sse.samples.length > 200) metrics.sse.samples.shift();
+  }
+  scheduleMetricsPersist();
+}
+
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const basePath = req.originalUrl ? req.originalUrl.split('?')[0] : req.path;
+    const routePath = req.route?.path || basePath || req.path;
+    recordRequestMetrics({
+      route: routePath,
+      method: req.method,
+      status: res.statusCode,
+      user: extractUser(req),
+      duration: Date.now() - start
+    });
+  });
+  next();
+});
 
 // ===== KB (embedding index at boot) =====
 const kbFiles = [];
@@ -399,6 +547,14 @@ app.post('/api/kb/search', async (req, res) => {
   try {
     const q = String(req.body?.q || '').trim();
     if (!q) return res.json({ items: [] });
+    const cacheKey = q.toLowerCase();
+    const cached = kbSearchCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < KB_CACHE_TTL) {
+      recordCacheStat('kb', true);
+      return res.json({ items: cached.items });
+    }
+    if (cached) kbSearchCache.delete(cacheKey);
+    recordCacheStat('kb', false);
     const [qEmb] = await openaiEmbed([q]);
     const scored = kbChunks.map(ch => ({ ...ch, score: cosine(qEmb, ch.embedding) }))
                            .sort((a,b)=> b.score - a.score).slice(0, 20);
@@ -415,6 +571,11 @@ app.post('/api/kb/search', async (req, res) => {
       });
       if (items.length >= 5) break;
     }
+    kbSearchCache.set(cacheKey, { ts: Date.now(), items });
+    if (kbSearchCache.size > KB_CACHE_MAX) {
+      const oldestKey = kbSearchCache.keys().next().value;
+      kbSearchCache.delete(oldestKey);
+    }
     res.json({ items });
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
@@ -423,9 +584,45 @@ app.post('/api/kb/search', async (req, res) => {
 app.post('/api/kb/index', async (req, res) => {
   try {
     const key = req.headers['x-admin-key'];
-    if (key !== (process.env.ADMIN_KEY||'4868')) return res.status(403).json({ error:'Forbidden' });
+    if (key !== ADMIN_KEY) return res.status(403).json({ error:'Forbidden' });
     await indexKB(); res.json({ ok:true, files: kbFiles.length, chunks: kbChunks.length });
   } catch (e) { res.status(500).json({ error: String(e) }); }
+});
+
+app.get('/admin/usage', (req, res) => {
+  const key = req.headers['x-admin-key'] || req.query.key;
+  if (key !== ADMIN_KEY) return res.status(403).json({ error: 'Forbidden' });
+
+  const totalRequests = Object.values(metrics.requestCounts).reduce((acc, v) => acc + v, 0);
+  const routes = Object.entries(metrics.requestCounts)
+    .map(([route, count]) => ({ route, count }))
+    .sort((a, b) => b.count - a.count);
+  const users = Object.entries(metrics.userCounts)
+    .map(([user, count]) => ({ user, count }))
+    .sort((a, b) => b.count - a.count);
+  const daily = Object.entries(metrics.dailyCounts)
+    .map(([date, count]) => ({ date, count }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+  const sseSamples = Array.isArray(metrics.sse?.samples) ? metrics.sse.samples : [];
+  const sseAverage = sseSamples.length ? sseSamples.reduce((acc, v) => acc + v, 0) / sseSamples.length : 0;
+  const history = readJSON(HISTORY_FP, []);
+
+  res.json({
+    updatedAt: Date.now(),
+    totalRequests,
+    routes,
+    users,
+    daily,
+    tokens: metrics.tokens,
+    sse: {
+      averageMs: sseAverage,
+      latestMs: sseSamples.length ? sseSamples[sseSamples.length - 1] : 0,
+      samples: sseSamples.length
+    },
+    cache: metrics.cache,
+    recent: metrics.requestLog.slice(-50).reverse(),
+    events: history.slice(-50).reverse()
+  });
 });
 
 const port = process.env.PORT || 3000;

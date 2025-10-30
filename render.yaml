@@ -1,0 +1,22 @@
+services:
+  - type: web
+    name: aidlex-ae
+    env: node
+    plan: free
+    region: oregon
+    buildCommand: npm install
+    startCommand: npm run dev
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: ADMIN_KEY
+        sync: false
+    disks:
+      - name: uploads
+        mountPath: /uploads
+      - name: data
+        mountPath: /data
+    autoDeploy: true
+    healthCheckPath: /

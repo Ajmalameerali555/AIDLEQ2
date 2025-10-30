@@ -428,5 +428,5 @@ app.post('/api/kb/index', async (req, res) => {
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
 
-const port = process.env.PORT || 3000;
+const port = Number(process.env.PORT) || 3000;
 app.listen(port, () => console.log(`AIDLEX.AE running on http://localhost:${port}`));

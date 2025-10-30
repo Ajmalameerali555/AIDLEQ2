@@ -20,6 +20,7 @@ const APP_DIR = path.join(__dirname, 'app');
 const KB_DIR  = path.join(__dirname, 'kb');
 const UP_DIR  = path.join(__dirname, 'uploads');
 const DATA_DIR= path.join(__dirname, 'data');
+const KB_CACHE_FP = path.join(DATA_DIR, 'kb-index.json');
 if (!fs.existsSync(UP_DIR)) fs.mkdirSync(UP_DIR, { recursive: true });
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 
@@ -39,6 +40,27 @@ const CHAT_URL = 'https://api.openai.com/v1/chat/completions';
 const EMBED_URL = 'https://api.openai.com/v1/embeddings';
 const TTS_URL   = 'https://api.openai.com/v1/audio/speech';
 const STT_URL   = 'https://api.openai.com/v1/audio/transcriptions';
+const MISSING_KEY_MESSAGE = 'OpenAI API key is not configured. Set OPENAI_API_KEY environment variable and restart the server.';
+
+function ensureOpenAIKey() {
+  if (!OPENAI_API_KEY) {
+    const err = new Error(MISSING_KEY_MESSAGE);
+    err.status = 503;
+    err.code = 'NO_OPENAI_KEY';
+    throw err;
+  }
+  return OPENAI_API_KEY;
+}
+
+function handleAIError(res, error, defaultStatus = 500) {
+  if (error?.status === 503 || error?.code === 'NO_OPENAI_KEY') {
+    return res.status(503).json({
+      error: error.message,
+      action: 'Set the OPENAI_API_KEY environment variable and restart the server.'
+    });
+  }
+  return res.status(defaultStatus).json({ error: String(error) });
+}
 
 // IMPORTANT: Your fine-tuned model id
 const MODEL_ID  = 'ft:gpt-4.1-nano-2025-04-14:aj-solutions:aidlex-uae-legal-2025-07:CTOxAkj9';
@@ -46,6 +68,7 @@ const EMBED_MODEL = 'text-embedding-3-large';
 
 // ===== Helpers =====
 async function openaiChat(messages, { temperature=0.2, max_tokens=1200 } = {}) {
+  ensureOpenAIKey();
   const r = await fetch(CHAT_URL, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -56,6 +79,7 @@ async function openaiChat(messages, { temperature=0.2, max_tokens=1200 } = {}) {
   return j.choices?.[0]?.message?.content?.trim() || '';
 }
 async function openaiEmbed(texts) {
+  ensureOpenAIKey();
   const r = await fetch(EMBED_URL, {
     method: 'POST',
     headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -91,6 +115,17 @@ function logEvent(mobile, type, summary) {
 // ===== KB (embedding index at boot) =====
 const kbFiles = [];
 const kbChunks = [];
+let kbLoaded = false;
+let kbLoadPromise = null;
+let kbCacheMeta = { savedAt: null };
+
+function setKBData(files, chunks) {
+  kbFiles.length = 0;
+  kbFiles.push(...files);
+  kbChunks.length = 0;
+  kbChunks.push(...chunks);
+  kbLoaded = true;
+}
 
 function readAllFiles(dir) {
   const out = [];
@@ -136,8 +171,24 @@ function extractSection(md, title){
   const section = next>=0 ? after.slice(0,next) : after;
   return section.trim().replace(/^\s*[\r\n]+/,'').slice(0, 600);
 }
+function loadKBCache() {
+  if (!fs.existsSync(KB_CACHE_FP)) return null;
+  try {
+    const data = JSON.parse(fs.readFileSync(KB_CACHE_FP, 'utf-8'));
+    if (!Array.isArray(data.files) || !Array.isArray(data.chunks)) return null;
+    setKBData(data.files, data.chunks);
+    kbCacheMeta = { savedAt: data.savedAt || null };
+    return { files: kbFiles.length, chunks: kbChunks.length, savedAt: kbCacheMeta.savedAt, cachePath: KB_CACHE_FP, durationMs: null };
+  } catch (err) {
+    console.warn('Failed to load KB cache:', err);
+    return null;
+  }
+}
+
 async function indexKB() {
-  kbFiles.length = 0; kbChunks.length = 0;
+  const start = Date.now();
+  const indexedFiles = [];
+  const indexedChunks = [];
   const files = readAllFiles(KB_DIR);
   for (const fp of files) {
     const raw = fs.readFileSync(fp, 'utf-8');
@@ -151,16 +202,51 @@ async function indexKB() {
       summaryAR: extractSection(ar, '**Summary**'),
       bodyEN: en, bodyAR: ar
     };
-    kbFiles.push(fileRec);
+    indexedFiles.push(fileRec);
     const textForEmbed = `${JSON.stringify(meta)}\n${en}\n${ar}`;
     const parts = chunk(textForEmbed, 2500, 250);
-    const embeds = await openaiEmbed(parts);
-    embeds.forEach((emb, idx) => {
-      kbChunks.push({ id: `${id}#${idx}`, fileId: id, text: parts[idx], meta, embedding: emb });
-    });
+    if (parts.length) {
+      const embeds = await openaiEmbed(parts);
+      embeds.forEach((emb, idx) => {
+        indexedChunks.push({ id: `${id}#${idx}`, fileId: id, text: parts[idx], meta, embedding: emb });
+      });
+    }
   }
+  setKBData(indexedFiles, indexedChunks);
+  const savedAt = new Date().toISOString();
+  kbCacheMeta = { savedAt };
+  writeJSON(KB_CACHE_FP, { version: 1, savedAt, files: indexedFiles, chunks: indexedChunks });
+  return {
+    files: indexedFiles.length,
+    chunks: indexedChunks.length,
+    savedAt,
+    cachePath: KB_CACHE_FP,
+    durationMs: Date.now() - start
+  };
 }
-await indexKB();
+
+async function ensureKbLoaded({ forceReindex = false } = {}) {
+  if (forceReindex) {
+    const result = await indexKB();
+    const payload = { source: 'reindex', ...result };
+    kbLoadPromise = Promise.resolve(payload);
+    return payload;
+  }
+  if (kbLoaded) {
+    return { source: 'hot', files: kbFiles.length, chunks: kbChunks.length, savedAt: kbCacheMeta.savedAt, cachePath: KB_CACHE_FP, durationMs: null };
+  }
+  if (!kbLoadPromise) {
+    kbLoadPromise = (async () => {
+      const cache = loadKBCache();
+      if (cache) return { source: 'cache', ...cache };
+      const indexed = await indexKB();
+      return { source: 'built', ...indexed };
+    })();
+  }
+  const result = await kbLoadPromise;
+  kbLoadPromise = Promise.resolve(result);
+  return result;
+}
 
 // ===== System Prompts =====
 const SYS_BASE = `You are AIDLEX.AE, a bilingual UAE-legal assistant. Style: formal, precise, premium.
@@ -234,6 +320,7 @@ app.post('/api/upload', upload.array('files', 10), (req, res) => {
 // TTS (fallback) - OpenAI tts-1 -> mp3
 app.post('/api/tts', async (req, res) => {
   try {
+    ensureOpenAIKey();
     const text = await new Promise(resolve => {
       let data = ''; req.setEncoding('utf8');
       req.on('data', chunk => data += chunk); req.on('end', () => resolve(data));
@@ -254,12 +341,13 @@ app.post('/api/tts', async (req, res) => {
     if (!r.ok) throw new Error(await r.text());
     res.setHeader('Content-Type', 'audio/mpeg');
     r.body.pipe(res);
-  } catch (e) { res.status(500).json({ error: String(e) }); }
+  } catch (e) { handleAIError(res, e); }
 });
 
 // STT (Whisper)
 app.post('/api/stt', upload.single('audio'), async (req, res) => {
   try {
+    ensureOpenAIKey();
     const f = req.file;
     if (!f) return res.status(400).json({ error: 'audio missing' });
     const form = new FormData();
@@ -273,7 +361,7 @@ app.post('/api/stt', upload.single('audio'), async (req, res) => {
     if (!r.ok) throw new Error(await r.text());
     const j = await r.json();
     res.json({ text: j.text });
-  } catch (e) { res.status(500).json({ error: String(e) }); }
+  } catch (e) { handleAIError(res, e); }
 });
 
 // Chat (attachments listed as context)
@@ -289,7 +377,7 @@ app.post('/api/chat', async (req, res) => {
     ]);
     logEvent(profile.mobile, 'chat', `Q: ${q.slice(0,100)}...`);
     res.json({ text: txt });
-  } catch (e) { res.status(500).json({ error: String(e) }); }
+  } catch (e) { handleAIError(res, e); }
 });
 
 // Memo: preflight then final
@@ -359,7 +447,7 @@ Please produce printable HTML with EN then AR, centered headers, formal salutati
     ], { max_tokens: 1800 });
     logEvent(profile.mobile, 'memo', `Generated memo for ${p.caseType}`);
     res.json({ stage:'final', html });
-  } catch (e) { res.status(400).json({ error: String(e) }); }
+  } catch (e) { handleAIError(res, e, 400); }
 });
 
 // Translation
@@ -373,7 +461,7 @@ app.post('/api/translate', async (req, res) => {
     ], { max_tokens: 1200 });
     logEvent(profile?.mobile, 'translate', `Chars: ${source.length}`);
     res.json({ arabic: txt });
-  } catch (e) { res.status(400).json({ error: String(e) }); }
+  } catch (e) { handleAIError(res, e, 400); }
 });
 
 // Formal letter / complaint
@@ -391,7 +479,7 @@ Generate EN then AR, with subject, body, and signature.` }
     ], { max_tokens: 1200 });
     logEvent(p.profile?.mobile, 'letter', `Dept: ${p.dept||'-'}`);
     res.json({ html });
-  } catch (e) { res.status(400).json({ error: String(e) }); }
+  } catch (e) { handleAIError(res, e, 400); }
 });
 
 // KB: embeddings search
@@ -399,6 +487,7 @@ app.post('/api/kb/search', async (req, res) => {
   try {
     const q = String(req.body?.q || '').trim();
     if (!q) return res.json({ items: [] });
+    await ensureKbLoaded();
     const [qEmb] = await openaiEmbed([q]);
     const scored = kbChunks.map(ch => ({ ...ch, score: cosine(qEmb, ch.embedding) }))
                            .sort((a,b)=> b.score - a.score).slice(0, 20);
@@ -416,7 +505,7 @@ app.post('/api/kb/search', async (req, res) => {
       if (items.length >= 5) break;
     }
     res.json({ items });
-  } catch (e) { res.status(500).json({ error: String(e) }); }
+  } catch (e) { handleAIError(res, e); }
 });
 
 // KB: re-index
@@ -424,8 +513,12 @@ app.post('/api/kb/index', async (req, res) => {
   try {
     const key = req.headers['x-admin-key'];
     if (key !== (process.env.ADMIN_KEY||'4868')) return res.status(403).json({ error:'Forbidden' });
-    await indexKB(); res.json({ ok:true, files: kbFiles.length, chunks: kbChunks.length });
-  } catch (e) { res.status(500).json({ error: String(e) }); }
+    const result = await ensureKbLoaded({ forceReindex: true });
+    res.json({ ok:true, ...result });
+  } catch (e) {
+    if (e?.status === 503 || e?.code === 'NO_OPENAI_KEY') return handleAIError(res, e);
+    res.status(500).json({ error: String(e), details: e?.stack });
+  }
 });
 
 const port = process.env.PORT || 3000;

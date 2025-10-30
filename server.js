@@ -278,15 +278,109 @@ app.post('/api/stt', upload.single('audio'), async (req, res) => {
 
 // Chat (attachments listed as context)
 app.post('/api/chat', async (req, res) => {
+  const accept = String(req.headers?.accept || '');
+  const q = String(req.body?.query ?? '').slice(0, 8000);
+  const files = req.body?.files || [];
+  const profile = req.body?.profile || {};
+  const contextNote = files.length ? `Attached files (URLs):\n${files.join('\n')}\n` : '';
+  const messages = [
+    { role: 'system', content: SYS_BASE },
+    { role: 'user', content: `User: ${profile.name||''} ${profile.mobile||''} ${profile.email||''}\n${contextNote}${q}` }
+  ];
+
+  if (accept.includes('text/event-stream')) {
+    const controller = new AbortController();
+    let closed = false;
+    const finish = () => {
+      if (!closed) {
+        closed = true;
+        if (!res.writableEnded) {
+          res.end();
+        }
+      }
+    };
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    if (typeof res.flushHeaders === 'function') res.flushHeaders();
+
+    req.on('close', () => {
+      controller.abort();
+      finish();
+    });
+
+    try {
+      const r = await fetch(CHAT_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          model: MODEL_ID,
+          messages,
+          temperature: 0.2,
+          max_tokens: 1200,
+          stream: true
+        }),
+        signal: controller.signal
+      });
+
+      if (!r.ok || !r.body) {
+        const errText = !r.ok ? await r.text() : 'No response body';
+        throw new Error(`OpenAI chat stream error ${r.status}: ${errText}`);
+      }
+
+      const decoder = new TextDecoder();
+      const reader = r.body.getReader();
+      let buffer = '';
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop() || '';
+
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line.startsWith('data:')) continue;
+          const payload = line.slice(5).trim();
+          if (payload === '[DONE]') {
+            res.write('data: [DONE]\n\n');
+            finish();
+            logEvent(profile.mobile, 'chat', `Q: ${q.slice(0,100)}...`);
+            return;
+          }
+          try {
+            const parsed = JSON.parse(payload);
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              res.write(`data: ${JSON.stringify({ text: delta })}\n\n`);
+            }
+          } catch (err) {
+            res.write(`data: ${JSON.stringify({ error: String(err) })}\n\n`);
+          }
+        }
+      }
+
+      res.write('data: [DONE]\n\n');
+      finish();
+      logEvent(profile.mobile, 'chat', `Q: ${q.slice(0,100)}...`);
+    } catch (e) {
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ error: String(e) })}\n\n`);
+        res.write('data: [DONE]\n\n');
+      }
+      finish();
+    }
+    return;
+  }
+
   try {
-    const q = String(req.body?.query ?? '').slice(0, 8000);
-    const files = req.body?.files || [];
-    const profile = req.body?.profile || {};
-    const contextNote = files.length ? `Attached files (URLs):\n${files.join('\n')}\n` : '';
-    const txt = await openaiChat([
-      { role: 'system', content: SYS_BASE },
-      { role: 'user', content: `User: ${profile.name||''} ${profile.mobile||''} ${profile.email||''}\n${contextNote}${q}` }
-    ]);
+    const txt = await openaiChat(messages);
     logEvent(profile.mobile, 'chat', `Q: ${q.slice(0,100)}...`);
     res.json({ text: txt });
   } catch (e) { res.status(500).json({ error: String(e) }); }

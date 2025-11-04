@@ -1,0 +1,8 @@
+# Netlify deployment instructions:
+# 1. In Netlify, create a new site from Git and select this repository.
+# 2. Ensure the build command is set to "npm run build".
+# 3. Set the publish directory to "app" so the built assets are served.
+# 4. Trigger the deploy; Netlify will run the Tailwind build automatically.
+[build]
+command = "npm run build"
+publish = "app"

@@ -10,7 +10,26 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&family=Noto+Naskh+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
-    :root { --bg:#0f0f0f; --fg:#fafafa; --muted:#a3a3a3; }
+    /* Global scroll + viewport sizing fixes */
+    html, body {
+      min-height: 100%;
+      height: auto;
+      overflow-y: auto;
+      overscroll-behavior-y: contain;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    html, body, #__next, #root { width: 100%; overflow-x: hidden; }
+
+    :root { --bg:#0f0f0f; --fg:#fafafa; --muted:#a3a3a3; --vh: 1vh; }
+    .min-h-screen-fix { min-height: calc(var(--vh) * 100); }
+
+    .bg-canvas, #particles, .video-bg, #tsparticles {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+
     body { background:var(--bg); color:var(--fg); font-family:Inter, system-ui, Segoe UI, Roboto, sans-serif; }
     .typewriter h1{ overflow:hidden; white-space:nowrap; letter-spacing:.14em; animation:typing 2.8s steps(30,end) forwards }
     @keyframes typing{from{width:0} to{width:100%}}
@@ -72,7 +91,7 @@
     .badge{font-size:10px; padding:2px 6px; border:1px solid rgba(255,255,255,.18); border-radius:999px; color:#cbd5e1}
   </style>
 </head>
-<body class="relative min-h-screen">
+<body class="relative min-h-screen min-h-screen-fix">
   <div id="tsparticles" class="absolute inset-0 -z-10"></div>
 
   <!-- ===== Views ===== -->
@@ -375,6 +394,20 @@
   </section>
 
   <script>
+    // Update CSS viewport unit for mobile address bar changes
+    function updateViewportUnit(){
+      const viewport = window.visualViewport;
+      const height = viewport ? viewport.height : window.innerHeight;
+      const vh = (height || window.innerHeight) * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+    }
+    updateViewportUnit();
+    window.addEventListener('resize', updateViewportUnit, { passive: true });
+    window.addEventListener('orientationchange', updateViewportUnit, { passive: true });
+    if(window.visualViewport){
+      window.visualViewport.addEventListener('resize', updateViewportUnit, { passive: true });
+    }
+
     // Particles
     tsParticles.load("tsparticles", {
       background:{ color:"#0f0f0f" },

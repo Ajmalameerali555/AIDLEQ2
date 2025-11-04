@@ -7,11 +7,25 @@
   <meta name="color-scheme" content="dark">
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://cdn.jsdelivr.net/npm/tsparticles@2.11.1/tsparticles.bundle.min.js"></script>
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700;800&family=Noto+Naskh+Arabic:wght@400;600;700&display=swap" rel="stylesheet">
   <style>
-    :root { --bg:#0f0f0f; --fg:#fafafa; --muted:#a3a3a3; }
-    body { background:var(--bg); color:var(--fg); font-family:Inter, system-ui, Segoe UI, Roboto, sans-serif; }
+    :root { --bg:#0f0f0f; --fg:#fafafa; --muted:#a3a3a3; --vh:1vh; }
+    html, body { height:100%; }
+    body {
+      background:var(--bg);
+      color:var(--fg);
+      font-family:Inter, system-ui, Segoe UI, Roboto, sans-serif;
+      min-height:calc(var(--vh, 1vh) * 100);
+      margin:0;
+      display:flex;
+      flex-direction:column;
+    }
+    .app-shell { flex:1 1 auto; display:flex; flex-direction:column; min-height:0; position:relative; }
+    main { flex:1 1 auto; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch; }
+    #tsparticles, #tsparticles canvas { pointer-events:none !important; }
+    .decor-layer, .decor-layer canvas, video.bg-video, canvas.bg-video { pointer-events:none !important; }
     .typewriter h1{ overflow:hidden; white-space:nowrap; letter-spacing:.14em; animation:typing 2.8s steps(30,end) forwards }
     @keyframes typing{from{width:0} to{width:100%}}
     .fade-in{opacity:0; animation:fadeIn 1s ease-in-out forwards}
@@ -70,10 +84,28 @@
     .step.active .num{ border-color:#60a5fa; background:#1f2937 }
 
     .badge{font-size:10px; padding:2px 6px; border:1px solid rgba(255,255,255,.18); border-radius:999px; color:#cbd5e1}
+    .app-header { position:relative; z-index:10; }
+    .app-header .brand { letter-spacing:.3em; text-transform:uppercase; font-size:.75rem; color:#94a3b8; font-weight:600; }
+    .app-header .actions { display:flex; flex-wrap:wrap; gap:.5rem; justify-content:flex-end; align-items:center; }
+    .auth-note { font-size:.75rem; color:#fcd34d; }
+    .auth-note.hidden { display:none; }
   </style>
 </head>
-<body class="relative min-h-screen">
+<body class="relative h-full">
   <div id="tsparticles" class="absolute inset-0 -z-10"></div>
+  <div class="app-shell">
+    <header class="app-header no-print">
+      <div class="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
+        <div class="brand">AIDLEX.AE</div>
+        <div class="actions" id="auth-container">
+          <div id="auth-note" class="auth-note hidden"></div>
+          <button id="btn-google" class="service-btn px-4 py-2 text-sm">Sign in with Google</button>
+          <button id="btn-guest" class="service-btn px-4 py-2 text-sm">Continue as Guest</button>
+          <button id="btn-session-exit" class="service-btn px-4 py-2 text-sm hidden"></button>
+        </div>
+      </div>
+    </header>
+    <main id="app-main">
 
   <!-- ===== Views ===== -->
 
@@ -374,7 +406,168 @@
     </div>
   </section>
 
-  <script>
+    </main>
+
+    <script>
+    const mainEl = document.getElementById('app-main');
+
+    function setViewportHeight(){
+      const vh = window.innerHeight * 0.01;
+      document.documentElement.style.setProperty('--vh', `${vh}px`);
+    }
+    setViewportHeight();
+    window.addEventListener('resize', setViewportHeight);
+    window.addEventListener('orientationchange', setViewportHeight);
+
+    const authNoteEl = document.getElementById('auth-note');
+    const guestBtn = document.getElementById('btn-guest');
+    const exitBtn = document.getElementById('btn-session-exit');
+    const googleBtn = document.getElementById('btn-google');
+    const GOOGLE_CLIENT_ID = window.AIDLEX_GOOGLE_CLIENT_ID || document.querySelector('meta[name="google-client-id"]')?.content || '';
+    let googleInitialized = false;
+
+    function showAuthNote(message, tone='info'){
+      if(!authNoteEl) return;
+      authNoteEl.textContent = message;
+      authNoteEl.classList.remove('hidden');
+      authNoteEl.style.color = tone === 'success' ? '#86efac' : tone === 'warn' ? '#fcd34d' : '#cbd5f5';
+    }
+
+    const SESSION_KEY = 'aidlex_session';
+    const GUEST_CHAT_KEY = 'aidlex_guest_chat';
+
+    function readStorage(key, fallback){
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch {
+        return fallback;
+      }
+    }
+
+    let currentSession = readStorage(SESSION_KEY, null);
+    if(currentSession && !currentSession.id){
+      currentSession = null;
+      localStorage.removeItem(SESSION_KEY);
+    }
+
+    let guestMessages = [];
+    const storedGuestMessages = readStorage(GUEST_CHAT_KEY, []);
+    if(currentSession?.type === 'guest' && Array.isArray(storedGuestMessages)){
+      guestMessages = storedGuestMessages;
+    } else {
+      localStorage.removeItem(GUEST_CHAT_KEY);
+    }
+    const guestRestoreQueue = [...guestMessages];
+
+    function persistGuestMessages(){
+      if(currentSession?.type !== 'guest') return;
+      if(guestMessages.length > 120){
+        guestMessages = guestMessages.slice(-120);
+      }
+      localStorage.setItem(GUEST_CHAT_KEY, JSON.stringify(guestMessages));
+    }
+
+    function renderSessionUi(){
+      if(!guestBtn || !exitBtn) return;
+      if(currentSession?.type === 'guest'){
+        guestBtn.classList.add('hidden');
+        exitBtn.classList.remove('hidden');
+        exitBtn.textContent = `Exit (${currentSession.name || 'Guest'})`;
+        exitBtn.dataset.mode = 'guest';
+        googleBtn?.classList.remove('hidden');
+      } else if(currentSession?.type === 'user'){
+        guestBtn.classList.add('hidden');
+        exitBtn.classList.remove('hidden');
+        exitBtn.textContent = 'Logout';
+        exitBtn.dataset.mode = 'user';
+        googleBtn?.classList.add('hidden');
+      } else {
+        guestBtn.classList.remove('hidden');
+        exitBtn.classList.add('hidden');
+        exitBtn.removeAttribute('data-mode');
+        googleBtn?.classList.remove('hidden');
+      }
+    }
+
+    function setSession(session){
+      if(session){
+        currentSession = session;
+        localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+      } else {
+        currentSession = null;
+        localStorage.removeItem(SESSION_KEY);
+      }
+      if(currentSession?.type !== 'guest'){
+        guestMessages = [];
+        localStorage.removeItem(GUEST_CHAT_KEY);
+      }
+      renderSessionUi();
+    }
+
+    function parseJwt(token){
+      try {
+        const base = token.split('.')[1];
+        if(!base) return {};
+        const normalized = base.replace(/-/g,'+').replace(/_/g,'/');
+        const decoded = decodeURIComponent(atob(normalized).split('').map(c=>`%${('00'+c.charCodeAt(0).toString(16)).slice(-2)}`).join(''));
+        return JSON.parse(decoded);
+      } catch {
+        return {};
+      }
+    }
+
+    function ensureGoogleInit(){
+      if(googleInitialized) return true;
+      if(!window.google?.accounts?.id) return false;
+      if(!GOOGLE_CLIENT_ID) return false;
+      try {
+        window.google.accounts.id.initialize({
+          client_id: GOOGLE_CLIENT_ID,
+          callback: handleGoogleCredential,
+          ux_mode: 'popup'
+        });
+        googleInitialized = true;
+        return true;
+      } catch (err) {
+        console.warn('Google init error', err);
+        return false;
+      }
+    }
+
+    function handleGoogleCredential({ credential }){
+      if(!credential){
+        showAuthNote('Google sign-in was cancelled. You can continue as guest.', 'warn');
+        return;
+      }
+      const profile = parseJwt(credential);
+      const name = profile?.name || 'Google User';
+      const id = profile?.sub || `google-${Date.now()}`;
+      setSession({ type:'user', id, name });
+      resetChatUi();
+      showAuthNote(`Signed in as ${name}.`, 'success');
+      showPanel('chat');
+    }
+
+    renderSessionUi();
+
+    googleBtn?.addEventListener('click', ()=>{
+      if(!ensureGoogleInit()){
+        showAuthNote('Google sign-in isn’t available in this region right now. You can continue as guest.', 'warn');
+        return;
+      }
+      try {
+        window.google.accounts.id.prompt((notification)=>{
+          if(notification?.isNotDisplayed?.() || notification?.isSkippedMoment?.()){
+            showAuthNote('Google sign-in isn’t available in this region right now. You can continue as guest.', 'warn');
+          }
+        });
+      } catch (err) {
+        console.error('Google sign-in error', err);
+        showAuthNote('Google sign-in isn’t available in this region right now. You can continue as guest.', 'warn');
+      }
+    });
+
     // Particles
     tsParticles.load("tsparticles", {
       background:{ color:"#0f0f0f" },
@@ -394,7 +587,9 @@
     function goto(view){
       Object.values(V).forEach(el => el.classList.add('hidden'));
       V[view].classList.remove('hidden');
-      window.scrollTo({ top:0, behavior:"smooth" });
+      if(mainEl){
+        mainEl.scrollTo({ top:0, behavior:"smooth" });
+      }
     }
 
     // Begin -> Profile
@@ -447,7 +642,9 @@
       if(V.workspace.classList.contains('hidden')) goto('workspace');
       Object.values(panels).forEach(id=>document.getElementById(id)?.classList.add("hidden"));
       document.getElementById(panels[key])?.classList.remove("hidden");
-      window.scrollTo({ top:0, behavior:"smooth" });
+      if(mainEl){
+        mainEl.scrollTo({ top:0, behavior:"smooth" });
+      }
     }
     document.querySelectorAll("#view-services .service-btn").forEach(btn=>{
       const panel = btn.dataset.panel; const prompt = btn.dataset.prompt;
@@ -458,6 +655,7 @@
     });
 
     // ===== Voice: TTS primary (Web Speech) with OpenAI fallback =====
+    const MAX_TTS_CHUNK = 280;
     let voices = [];
     function loadVoices(){
       voices = speechSynthesis.getVoices();
@@ -465,21 +663,53 @@
     }
     if('speechSynthesis' in window){ speechSynthesis.onvoiceschanged = loadVoices; loadVoices(); }
     function pickVoice(lang){
-      const femNames = ['female','zira','laila','leila','mariam','salma','dania','sara','hoda','zeina','amira','fatima','noura','layla','naira','nada','ar-','en-'];
-      const list = voices.filter(v=> v.lang && v.lang.toLowerCase().startsWith(lang.toLowerCase()));
-      const female = list.find(v=> femNames.some(n=> (v.name||'').toLowerCase().includes(n))) || list[0];
-      return female || voices[0];
+      const target = (lang || '').toLowerCase();
+      const scored = voices
+        .filter(v=> v.lang && v.lang.toLowerCase().startsWith(target))
+        .map(v=>{
+          const name = (v.name || '').toLowerCase();
+          let score = 0;
+          if(name.includes('google')) score += 5;
+          if(name.includes('female') || name.includes('zira') || name.includes('laila') || name.includes('salma')) score += 1;
+          return { voice: v, score };
+        })
+        .sort((a,b)=> b.score - a.score);
+      return scored[0]?.voice || voices.find(v=> (v.lang||'').toLowerCase().startsWith(target)) || voices[0];
+    }
+    function chunkForSpeech(text){
+      const chunks = [];
+      let remaining = text;
+      while(remaining.length){
+        if(remaining.length <= MAX_TTS_CHUNK){
+          chunks.push(remaining.trim());
+          break;
+        }
+        let slice = remaining.slice(0, MAX_TTS_CHUNK + 1);
+        let breakAt = Math.max(
+          slice.lastIndexOf('. '),
+          slice.lastIndexOf('؟'),
+          slice.lastIndexOf('!'),
+          slice.lastIndexOf('،'),
+          slice.lastIndexOf('\n'),
+          slice.lastIndexOf(' ')
+        );
+        if(breakAt <= 0) breakAt = MAX_TTS_CHUNK;
+        chunks.push(remaining.slice(0, breakAt + 1).trim());
+        remaining = remaining.slice(breakAt + 1).trimStart();
+      }
+      return chunks.filter(Boolean);
     }
     async function speakText(text){
       const isAR = /[\u0600-\u06FF]/.test(text);
       if('speechSynthesis' in window && voices.length){
-        const chunks = text.match(/.{1,700}(\s|$)/g) || [text];
+        const chunks = chunkForSpeech(text);
+        if(!chunks.length) chunks.push(text);
         for(const ch of chunks){
           const u = new SpeechSynthesisUtterance(ch);
           const voice = pickVoice(isAR ? 'ar' : 'en');
           if(voice) u.voice = voice;
           u.lang = isAR ? 'ar-AE' : 'en-GB';
-          u.rate = 1.02; u.pitch = 1.0; u.volume = 1.0;
+          u.rate = 0.95; u.pitch = 1.0; u.volume = 1.0;
           speechSynthesis.speak(u);
         }
         return;
@@ -532,6 +762,29 @@
     const chatFiles = document.getElementById('chat-files');
     const chatFilesList = document.getElementById('chat-files-list');
     const filesSelected = [];
+    const CHAT_STICKY_OFFSET = 120;
+    let chatShouldStick = true;
+
+    function isNearBottom(){
+      return (log.scrollHeight - log.scrollTop - log.clientHeight) <= CHAT_STICKY_OFFSET;
+    }
+
+    function maybeStick(){
+      if(chatShouldStick){
+        log.scrollTop = log.scrollHeight;
+      }
+    }
+
+    log.addEventListener('scroll', ()=>{
+      chatShouldStick = isNearBottom();
+    });
+
+    function resetChatUi(){
+      log.innerHTML = '';
+      chatFilesList.innerHTML = '';
+      filesSelected.length = 0;
+      chatShouldStick = true;
+    }
     function makeAssistantTools(getText){
       const tools = document.createElement('div');
       tools.className = 'assistant-tools mt-1 text-xs text-zinc-400 flex items-center gap-2';
@@ -543,6 +796,7 @@
       return tools;
     }
     function bubble(role, text='', opts={}){
+      const shouldStick = chatShouldStick && !opts.restore;
       const wrap = document.createElement('div');
       wrap.className = "mb-3";
       const bubbleEl = document.createElement('div');
@@ -560,7 +814,9 @@
         wrap.appendChild(makeAssistantTools(()=> bubbleEl.textContent.trim()));
       }
       log.appendChild(wrap);
-      log.scrollTop = log.scrollHeight;
+      if(shouldStick){
+        requestAnimationFrame(maybeStick);
+      }
       return { wrap, bubble: bubbleEl, typingRow };
     }
     function finalizeAssistantBubble(entry, text){
@@ -576,12 +832,64 @@
       if(!entry.wrap.querySelector('.assistant-tools')){
         entry.wrap.appendChild(makeAssistantTools(()=> entry.bubble.textContent.trim()));
       }
-      log.scrollTop = log.scrollHeight;
+      maybeStick();
     }
     document.getElementById('btn-speak-last').addEventListener('click', ()=>{
       const bubbles = [...log.querySelectorAll('.bubble.assistant')];
       if(!bubbles.length) return;
       speakText(bubbles[bubbles.length-1].textContent.trim());
+    });
+
+    function restoreGuestConversation(){
+      if(!guestRestoreQueue.length) return;
+      guestRestoreQueue.forEach(msg=>{
+        bubble(msg.role, msg.text || '', { restore:true });
+      });
+      chatShouldStick = true;
+      requestAnimationFrame(()=>{ log.scrollTop = log.scrollHeight; });
+    }
+
+    function startGuestSession(){
+      const profile = readStorage('aidlex_profile', {});
+      const derivedName = typeof profile?.name === 'string' ? profile.name.trim().split(/\s+/)[0] : '';
+      const name = derivedName || 'Guest';
+      const id = `guest-${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`;
+      guestMessages = [];
+      persistGuestMessages();
+      setSession({ type:'guest', id, name });
+      resetChatUi();
+      showAuthNote(`Guest session ready — ${name}.`, 'success');
+      showPanel('chat');
+    }
+
+    function endGuestSession(){
+      guestMessages = [];
+      localStorage.removeItem(GUEST_CHAT_KEY);
+      resetChatUi();
+      setSession(null);
+      showAuthNote('Guest session ended. You can start a new session anytime.', 'warn');
+      goto('welcome');
+    }
+
+    guestBtn?.addEventListener('click', ()=>{
+      if(currentSession?.type === 'guest'){
+        showAuthNote(`You're already in a guest session as ${currentSession.name || 'Guest'}.`, 'info');
+        showPanel('chat');
+        return;
+      }
+      startGuestSession();
+    });
+
+    exitBtn?.addEventListener('click', ()=>{
+      const mode = exitBtn.dataset.mode;
+      if(mode === 'guest'){
+        endGuestSession();
+      } else if(mode === 'user'){
+        resetChatUi();
+        setSession(null);
+        showAuthNote('Signed out.', 'warn');
+        goto('welcome');
+      }
     });
     chatFiles.addEventListener('change', async (e)=>{
       const fd = new FormData();
@@ -598,13 +906,30 @@
     });
     function sendMessage(){
       const q = chatInput.value.trim(); if(!q) return;
+      const isGuest = currentSession?.type === 'guest';
       bubble('user', q);
+      if(isGuest){
+        guestMessages.push({ role:'user', text: q });
+        persistGuestMessages();
+      }
       chatInput.value = "";
       let profile = {};
       try { profile = JSON.parse(localStorage.getItem('aidlex_profile')||'{}'); }
       catch {}
       const payload = { query: q, files: [...filesSelected], profile };
       const pending = bubble('assistant', '', { typing:true });
+      let guestAssistantIndex = -1;
+      if(isGuest){
+        guestMessages.push({ role:'assistant', text: '' });
+        guestAssistantIndex = guestMessages.length - 1;
+        persistGuestMessages();
+      }
+      const updateAssistantCache = (text)=>{
+        if(isGuest && guestAssistantIndex >= 0){
+          guestMessages[guestAssistantIndex].text = text;
+          persistGuestMessages();
+        }
+      };
       if(window.EventSource){
         let url;
         try { url = '/api/chat?payload=' + encodeURIComponent(JSON.stringify(payload)); }
@@ -625,12 +950,18 @@
             if(data.token){
               fullText += data.token;
               pending.bubble.textContent = fullText;
-              log.scrollTop = log.scrollHeight;
+              if(chatShouldStick){
+                maybeStick();
+              }
+              updateAssistantCache(fullText);
             }
           } catch {
             fullText += ev.data;
             pending.bubble.textContent = fullText;
-            log.scrollTop = log.scrollHeight;
+            if(chatShouldStick){
+              maybeStick();
+            }
+            updateAssistantCache(fullText);
           }
         };
         es.addEventListener('server-error', (ev)=>{
@@ -647,12 +978,15 @@
             finish(`Error: ${serverError}`);
             return;
           }
-          finish(fullText || '(no response)');
+          const output = fullText || '(no response)';
+          updateAssistantCache(output);
+          finish(output);
         });
         es.onerror = ()=>{
           if(finished) return;
           es.close();
           const msg = serverError ? `Error: ${serverError}` : (fullText || 'Error receiving response.');
+          updateAssistantCache(msg);
           finish(msg);
         };
         return;
@@ -661,15 +995,19 @@
         .then(r=>r.json())
         .then(d=>{
           const txt = typeof d.text === 'string' ? d.text : '';
+          updateAssistantCache(txt);
           finalizeAssistantBubble(pending, txt);
         })
         .catch(err=>{
           const msg = err?.message ? `Error: ${err.message}` : `Error: ${err}`;
+          updateAssistantCache(msg);
           finalizeAssistantBubble(pending, msg);
         });
     }
     document.getElementById('btn-send').addEventListener('click', sendMessage);
     chatInput.addEventListener('keydown', (e)=>{ if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); } });
+
+    restoreGuestConversation();
 
     // ===== Memo, Translation, Letter, Uploads, KB: include profile in calls =====
     function profileOrAlert(){
@@ -795,6 +1133,7 @@
         box.appendChild(el);
       });
     });
-  </script>
+    </script>
+  </div>
 </body>
 </html>

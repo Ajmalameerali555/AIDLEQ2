@@ -49,11 +49,25 @@ const STT_URL   = 'https://api.openai.com/v1/audio/transcriptions';
 const MODEL_ID  = 'ft:gpt-4.1-nano-2025-04-14:aj-solutions:aidlex-uae-legal-2025-07:CTOxAkj9';
 const EMBED_MODEL = 'text-embedding-3-large';
 
+function requireOpenAIKey() {
+  if (!OPENAI_API_KEY) {
+    throw new Error('Server misconfiguration: OPENAI_API_KEY is not set. Add it to your .env file and restart the server.');
+  }
+}
+
+function openAIHeaders(extra = {}) {
+  requireOpenAIKey();
+  return {
+    Authorization: `Bearer ${OPENAI_API_KEY}`,
+    ...extra
+  };
+}
+
 // ===== Helpers =====
 async function openaiChat(messages, { temperature=0.2, max_tokens=1200 } = {}) {
   const r = await fetch(CHAT_URL, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    headers: openAIHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ model: MODEL_ID, messages, temperature, max_tokens })
   });
   if (!r.ok) throw new Error(`OpenAI chat error ${r.status}: ${await r.text()}`);
@@ -63,7 +77,7 @@ async function openaiChat(messages, { temperature=0.2, max_tokens=1200 } = {}) {
 async function openaiEmbed(texts) {
   const r = await fetch(EMBED_URL, {
     method: 'POST',
-    headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+    headers: openAIHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({ model: EMBED_MODEL, input: texts })
   });
   if (!r.ok) throw new Error(`OpenAI embed error ${r.status}: ${await r.text()}`);
@@ -336,10 +350,9 @@ app.post('/api/tts', async (req, res) => {
     });
     const r = await fetch(TTS_URL, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${OPENAI_API_KEY}`,
+      headers: openAIHeaders({
         'Content-Type': 'application/json'
-      },
+      }),
       body: JSON.stringify({
         model: 'tts-1',
         voice: 'verse',   // female-like voice
@@ -363,7 +376,7 @@ app.post('/api/stt', upload.single('audio'), async (req, res) => {
     form.append('file', fs.createReadStream(f.path), { filename: f.originalname || 'audio.webm' });
     const r = await fetch(STT_URL, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+      headers: openAIHeaders(),
       body: form
     });
     if (!r.ok) throw new Error(await r.text());
@@ -411,7 +424,7 @@ app.get('/api/chat', async (req, res) => {
   try {
     const r = await fetch(CHAT_URL, {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
+      headers: openAIHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ model: MODEL_ID, messages, temperature: 0.2, max_tokens: 1200, stream: true }),
       signal: controller.signal
     });
@@ -504,7 +517,7 @@ app.post('/api/chat', async (req, res) => {
       const r = await fetch(CHAT_URL, {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
+          ...openAIHeaders(),
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({

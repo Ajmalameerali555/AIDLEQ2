@@ -1,0 +1,1 @@
+import {Link} from 'react-router-dom';import {ReactNode} from 'react';export function Button({to,children,variant='gold'}:{to?:string;children:ReactNode;variant?:'gold'|'navy'}){const cls=`btn ${variant==='gold'?'btn-gold':'btn-navy'}`;return to?<Link className={cls} to={to}>{children}</Link>:<button className={cls}>{children}</button>}

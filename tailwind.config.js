@@ -1,7 +1,1 @@
-module.exports = {
-  content: ["./app/**/*.{html,js,ts}"],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-};
+export default {content:["./index.html","./src/**/*.{ts,tsx}"],theme:{extend:{colors:{navy:{950:'#031425',900:'#061C31',800:'#0B2943'},gold:{500:'#C99532',400:'#DCAA4B',300:'#E8C477'},ivory:'#FCF9F2',warm:'#FFFDF8',charcoal:'#15191E',muted:'#6B7280'},fontFamily:{heading:['Manrope','sans-serif'],body:['Inter','sans-serif'],accent:['Cormorant Garamond','serif'],arabic:['Noto Sans Arabic','Tahoma','sans-serif']},boxShadow:{gold:'0 18px 50px rgba(201,149,50,.22)'}}},plugins:[]}
